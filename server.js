@@ -2,8 +2,10 @@
 // Serves the game and phone pages, relays phone input to the game over WebSocket,
 // and (later) proxies AI requests so the API key never reaches the browser.
 //
-//   npm start       -> laptop only (http://localhost:3000)
-//   npm run phone   -> also opens a Cloudflare tunnel so an iPhone can connect over HTTPS
+//   npm start             -> laptop only (http://localhost:3000)
+//   npm run phone         -> also opens an HTTPS tunnel so an iPhone can connect
+//                            (tries Cloudflare first, then ngrok if Cloudflare doesn't work)
+//   npm run phone:ngrok   -> skip Cloudflare and use ngrok right away
 
 import express from "express";
 import http from "node:http";
@@ -24,10 +26,22 @@ try {
 }
 
 const PORT = Number(process.env.PORT) || 3000;
-const wantTunnel = process.argv.includes("--tunnel");
 
-// The public HTTPS address from the tunnel, once cloudflared tells us. Shown as a QR code.
+// Which tunnel to open: none, "auto" (Cloudflare, then ngrok), or "ngrok".
+let tunnelChoice = "none";
+for (const arg of process.argv) {
+  if (arg === "--tunnel") {
+    tunnelChoice = "auto";
+  }
+  if (arg === "--tunnel=ngrok") {
+    tunnelChoice = "ngrok";
+  }
+}
+
+// The public HTTPS address from the tunnel, once the tunnel tool tells us. Shown as a QR code.
 let tunnelUrl = null;
+let tunnelTool = null; // "cloudflared" or "ngrok"
+let tunnelProcess = null;
 
 // ---------- Web pages and files ----------
 
@@ -51,7 +65,7 @@ app.get("/phone", function (req, res) {
 
 // The game asks this to know what to put in the QR code.
 app.get("/api/info", function (req, res) {
-  res.json({ phoneUrl: getPhoneUrl(req), tunnel: tunnelUrl !== null });
+  res.json({ phoneUrl: getPhoneUrl(req), tunnel: tunnelUrl !== null, tunnelTool: tunnelTool });
 });
 
 app.get("/api/qr.svg", async function (req, res) {
@@ -182,40 +196,78 @@ function broadcastStatus() {
   }
 }
 
-// ---------- Cloudflare tunnel (for the iPhone) ----------
+// ---------- HTTPS tunnel (for the iPhone) ----------
+// iPhones only share tilt data with HTTPS pages, so we open a tunnel that gives this
+// laptop a temporary public https:// address.
 
-function startTunnel() {
-  console.log("Starting Cloudflare tunnel (takes a few seconds)...");
-  const child = spawn("cloudflared", ["tunnel", "--no-autoupdate", "--url", "http://localhost:" + PORT], {
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+const TUNNELS = {
+  cloudflared: {
+    args: ["tunnel", "--no-autoupdate", "--url", "http://localhost:" + PORT],
+    // cloudflared prints its random https://....trycloudflare.com address in its log.
+    urlPattern: /(https:\/\/[a-z0-9-]+\.trycloudflare\.com)/,
+  },
+  ngrok: {
+    args: ["http", String(PORT), "--log", "stdout", "--log-format", "logfmt"],
+    // ngrok prints a log line containing url=https://....ngrok-free.app
+    urlPattern: /url=(https:\/\/[^\s"]+)/,
+  },
+};
+const TUNNEL_TIMEOUT_MS = 20000;
+
+// Start one tunnel tool. If it fails or is too slow, call ifItFails().
+function startTunnel(tool, ifItFails) {
+  console.log("Starting " + tool + " tunnel (takes a few seconds)...");
+  const child = spawn(tool, TUNNELS[tool].args, { stdio: ["ignore", "pipe", "pipe"] });
+  tunnelProcess = child;
+  let failed = false;
+
+  function fail(reason) {
+    if (failed || tunnelUrl) {
+      return;
+    }
+    failed = true;
+    clearTimeout(timer);
+    console.log(tool + " didn't work (" + reason + ").");
+    child.kill();
+    ifItFails();
+  }
+
+  const timer = setTimeout(function () {
+    fail("no address after " + TUNNEL_TIMEOUT_MS / 1000 + " s; this network may block it");
+  }, TUNNEL_TIMEOUT_MS);
 
   child.on("error", function () {
-    console.log("");
-    console.log("Could not start cloudflared. Is it installed? See the README (Phone setup).");
-    console.log("The game still works on this laptop with the keyboard.");
+    fail("is it installed?");
   });
 
-  // cloudflared prints its random https://....trycloudflare.com address in its log output.
   function lookForUrl(chunk) {
-    const match = chunk.toString().match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/);
-    if (match && !tunnelUrl && !match[0].startsWith("https://api.")) {
-      tunnelUrl = match[0];
+    const match = chunk.toString().match(TUNNELS[tool].urlPattern);
+    if (match && !tunnelUrl && !failed && !match[1].startsWith("https://api.")) {
+      clearTimeout(timer);
+      tunnelUrl = match[1];
+      tunnelTool = tool;
       printPhoneInstructions();
     }
   }
   child.stdout.on("data", lookForUrl);
   child.stderr.on("data", lookForUrl);
-
-  // Stop the tunnel when the server stops.
-  process.on("exit", function () {
-    child.kill();
-  });
-  process.on("SIGINT", function () {
-    child.kill();
-    process.exit(0);
-  });
 }
+
+function noTunnelWorked() {
+  console.log("");
+  console.log("No tunnel could start, so the iPhone controller won't work right now.");
+  console.log("The game still works on this laptop with the keyboard. See the README (Phone setup).");
+}
+
+// Stop the tunnel when the server stops (Ctrl+C).
+process.on("exit", function () {
+  if (tunnelProcess) {
+    tunnelProcess.kill();
+  }
+});
+process.on("SIGINT", function () {
+  process.exit(0);
+});
 
 async function printPhoneInstructions() {
   const phoneUrl = tunnelUrl + "/phone.html";
@@ -224,15 +276,21 @@ async function printPhoneInstructions() {
   console.log("Phone controller (HTTPS):  " + phoneUrl);
   console.log(terminalQr);
   console.log("Scan the QR code on the game screen or above with your iPhone camera.");
-  console.log("(A brand-new tunnel can take ~10 seconds before the link works.)");
+  if (tunnelTool === "ngrok") {
+    console.log("ngrok shows a warning page first: tap \"Visit Site\".");
+  }
 }
 
 server.listen(PORT, function () {
   console.log("");
   console.log("Roadster Sim running.");
   console.log("Game on this laptop:  http://localhost:" + PORT);
-  if (wantTunnel) {
-    startTunnel();
+  if (tunnelChoice === "auto") {
+    startTunnel("cloudflared", function () {
+      startTunnel("ngrok", noTunnelWorked);
+    });
+  } else if (tunnelChoice === "ngrok") {
+    startTunnel("ngrok", noTunnelWorked);
   } else {
     console.log("For an iPhone controller, stop this and run:  npm run phone");
   }

@@ -1,0 +1,161 @@
+<!doctype html>
+<!-- phone.html — Owner: A (Yuan). The phone yoke: hold sideways, tilt to steer, thumbs on the buttons. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#0b0d10">
+  <title>Roadster Yoke</title>
+  <style>
+    :root {
+      --bg: #0b0d10;
+      --panel: #171b21;
+      --text: #f2f4f7;
+      --muted: #8a93a0;
+      --gas: #2fd47a;
+      --brake: #ff4d5e;
+      --fans: #34d3ff;
+      --thrust: #ff9a3c;
+    }
+    * {
+      box-sizing: border-box;
+      /* No text selection, callouts, zooming or scrolling: this page is a game controller. */
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-touch-callout: none;
+      -webkit-tap-highlight-color: transparent;
+      touch-action: none;
+    }
+    html, body {
+      margin: 0;
+      height: 100%;
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", sans-serif;
+      overscroll-behavior: none;
+    }
+
+    #controller {
+      position: fixed;
+      inset: 0;
+      height: 100dvh;
+      display: grid;
+      grid-template-columns: 27% 1fr 27%;
+      gap: 10px;
+      padding: 10px max(10px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
+    }
+    .side { display: grid; grid-template-rows: 1fr 1.6fr; gap: 10px; }
+    .center { display: flex; flex-direction: column; align-items: center; justify-content: space-between; min-width: 0; }
+
+    .btn {
+      border: none;
+      border-radius: 18px;
+      background: var(--panel);
+      color: var(--text);
+      font: inherit;
+      font-weight: 800;
+      letter-spacing: 0.06em;
+      font-size: 5.5vh;
+      box-shadow: inset 0 0 0 2px rgba(255,255,255,0.06);
+      transition: transform 0.05s, background 0.05s;
+    }
+    .btn.pressed { transform: scale(0.97); }
+    #gas { color: var(--gas); }
+    #gas.pressed { background: var(--gas); color: #062814; }
+    #brake { color: var(--brake); }
+    #brake.pressed { background: var(--brake); color: #2b0509; }
+    #thrust { color: var(--thrust); }
+    #thrust.pressed { background: var(--thrust); color: #2e1500; }
+    #thrust.empty { color: var(--muted); opacity: 0.5; }
+    #fans { color: var(--muted); }
+    #fans.on { background: rgba(52, 211, 255, 0.18); color: var(--fans); box-shadow: inset 0 0 0 2px var(--fans), 0 0 24px rgba(52,211,255,0.35); }
+
+    #status { font-size: 3.6vh; color: var(--muted); display: flex; align-items: center; gap: 8px; }
+    #dot { width: 2.4vh; height: 2.4vh; border-radius: 50%; background: var(--brake); }
+    #dot.ok { background: var(--gas); }
+
+    #wheel { width: 38vh; height: 38vh; }
+    #readout { font-size: 3vh; color: var(--muted); font-variant-numeric: tabular-nums; }
+    #carInfo { display: flex; align-items: center; gap: 12px; font-size: 4vh; font-variant-numeric: tabular-nums; }
+    #speed { font-weight: 800; font-size: 7vh; }
+    #tank { width: 18vh; height: 1.6vh; border-radius: 1vh; background: rgba(255,255,255,0.1); overflow: hidden; }
+    #tankFill { height: 100%; width: 100%; background: var(--thrust); }
+
+    .small-row { display: flex; gap: 8px; width: 100%; }
+    .btn.small { flex: 1; font-size: 3.2vh; padding: 2.2vh 0; border-radius: 12px; }
+    #mode { color: var(--thrust); flex: 1.7; }
+
+    /* A red flash around the edge on crashes and hard landings. */
+    #flash { position: fixed; inset: 0; pointer-events: none; box-shadow: inset 0 0 0 0 rgba(255, 77, 94, 0); transition: box-shadow 0.3s; }
+    #flash.on { box-shadow: inset 0 0 0 1.5vh rgba(255, 77, 94, 0.9); transition: none; }
+
+    .overlay {
+      position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 16px; padding: 24px; text-align: center; background: var(--bg); z-index: 10;
+    }
+    .overlay h1 { margin: 0; font-size: 28px; }
+    .overlay p { margin: 0; color: var(--muted); max-width: 520px; line-height: 1.4; }
+    #startButton {
+      font: inherit; font-size: 22px; font-weight: 800; padding: 18px 40px; border-radius: 16px; border: none;
+      background: var(--text); color: var(--bg);
+    }
+    #startError { color: var(--brake); }
+    #rotateScreen { display: none; z-index: 20; }
+    @media (orientation: portrait) {
+      #rotateScreen { display: flex; }
+    }
+  </style>
+</head>
+<body>
+  <div id="controller">
+    <div class="side">
+      <button id="fans" class="btn">FANS</button>
+      <button id="brake" class="btn">BRAKE</button>
+    </div>
+
+    <div class="center">
+      <div id="status"><span id="dot"></span><span id="statusText">Connecting...</span></div>
+      <svg id="wheel" viewBox="-50 -50 100 100" aria-hidden="true">
+        <circle r="44" fill="none" stroke="#2a313b" stroke-width="9"></circle>
+        <circle r="44" fill="none" stroke="#f2f4f7" stroke-width="3"></circle>
+        <rect x="-44" y="-3" width="88" height="6" rx="3" fill="#f2f4f7"></rect>
+        <rect x="-3" y="0" width="6" height="44" rx="3" fill="#f2f4f7"></rect>
+        <circle r="11" fill="#171b21" stroke="#f2f4f7" stroke-width="3"></circle>
+        <rect x="-4" y="-52" width="8" height="12" rx="2" fill="#ff4d5e"></rect>
+      </svg>
+      <div id="readout">steer 0&deg; &middot; forward 0&deg;</div>
+      <div id="carInfo"><span id="speed">0</span><span>km/h</span><div id="tank"><div id="tankFill"></div></div></div>
+      <div class="small-row">
+        <button id="mode" class="btn small">MODE &middot; THRUST</button>
+        <button id="center" class="btn small">CENTER</button>
+        <button id="reset" class="btn small">RESET</button>
+      </div>
+    </div>
+
+    <div class="side">
+      <button id="thrust" class="btn">THRUST</button>
+      <button id="gas" class="btn">GAS</button>
+    </div>
+  </div>
+
+  <div id="flash"></div>
+
+  <div id="startScreen" class="overlay">
+    <h1>Roadster Yoke</h1>
+    <p>Hold your phone sideways like a steering wheel. Tilt to steer. Thumbs on GAS and BRAKE.</p>
+    <button id="startButton">Tap to start</button>
+    <p id="startError"></p>
+  </div>
+
+  <div id="rotateScreen" class="overlay">
+    <h1>Turn your phone sideways</h1>
+    <p>If it won't rotate, turn off Portrait Orientation Lock in Control Center.</p>
+  </div>
+
+  <script type="module" src="/phone.js"></script>
+</body>
+</html>

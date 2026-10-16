@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "phone": "node server.js --tunnel"
+    "phone": "node server.js --tunnel",
+    "phone:ngrok": "node server.js --tunnel=ngrok"
   },
   "engines": {
     "node": ">=20.12"

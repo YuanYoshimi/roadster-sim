@@ -311,6 +311,8 @@ async function refreshPhoneInfo() {
       hud.phoneUrl.textContent = info.phoneUrl;
       if (!info.tunnel) {
         hud.phoneUrl.textContent = info.phoneUrl + " (iPhone needs HTTPS: run npm run phone)";
+      } else if (info.tunnelTool === "ngrok") {
+        hud.phoneUrl.textContent = info.phoneUrl + " (on the ngrok warning page, tap Visit Site)";
       }
     }
     if (!info.tunnel) {

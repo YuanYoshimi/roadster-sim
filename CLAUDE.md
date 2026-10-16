@@ -6,6 +6,13 @@
 
 ---
 
+## Current status (update as you go)
+
+- **Oct 16 prototype is on `main`:** keyboard driving, fans, thrusters, 3 modes, landing assist, Blank + Reveal Jump levels, phone yoke over an HTTPS tunnel. AI coach and scenario generator are not built yet.
+- The repo is **private** for now. Make it public before submitting (command in README).
+- `npm run phone` tries cloudflared, then falls back to ngrok (some networks block Cloudflare quick tunnels). `npm run phone:ngrok` skips straight to ngrok.
+- Testing tip: `window.game` in the browser console exposes the car, world and camera. `game.frame(time)` steps one frame by hand.
+
 ## Who we are and what this is
 
 We're a **team of two**: Yuan and a friend, building at the **Tokyo Agent Hackathon** (+81 Builders) on **Saturday Oct 17, 2026**. Each of us runs our own Claude Code on our own laptop, working in the **same GitHub repo**. Building starts at 10:30 and **submissions close at 16:00 sharp**. Judging is a **3-minute live demo** at our table, and the top 5 teams demo on a projector.
@@ -76,6 +83,7 @@ Split the work so we rarely edit the same file. **Person A = Yuan, Person B = fr
 | `public/game.html`, `public/game.js` | B | Scene, camera, game loop, HUD, level menu |
 | `public/car.js` | B | Car physics: driving, fans, thruster tank, modes |
 | `public/car-model.js` | B | Stylized car mesh (swappable for .glb later) |
+| `public/effects.js` | B | Particle effects (thruster vapor, fan air) |
 | `public/levels.js`, `levels/*.json` | B | Level loader and level files |
 | `public/config.js` | shared | All tunable numbers. Small edits only, merge often |
 | `public/shared/protocol.js` | shared | Message formats. **Agree before changing** |

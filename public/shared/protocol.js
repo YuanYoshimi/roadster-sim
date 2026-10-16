@@ -17,7 +17,7 @@ export const DRIVE_MODES = ["performance", "thrust", "rocket"];
 
 // Controller input.
 // steer: -1 = full left, +1 = full right.
-// pitch: -1 = phone tilted forward (push the nose down), +1 = tilted back (nose up).
+// pitch: -1 = phone tipped forward (fly forward in Rocket mode), +1 = tipped back.
 export function makeInput() {
   return {
     type: MSG.INPUT,
