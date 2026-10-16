@@ -8,6 +8,7 @@
 
 ## Current status (update as you go)
 
+- **Realism + demo pass:** real tire model (magic formula, load sensitivity, friction circle), power-limited 1 MW motors with regen, TC/ABS/ESC, anti-roll bars, bump stops, aero drag + downforce with an active wing, thrusters use real air mass and pressure (the car gets lighter), 120 Hz physics. New sculpted car model with a full cockpit (yoke + live screens), telemetry panel (T), procedural sound (M to mute), title screen, guided demo tour, presentation mode (P).
 - **Scenarios added:** Figure-8 Circuit (Suzuka-style), Warehouse Store Parking (Costco-style), Rush-Hour Expressway, built from generator props (see Milestone 5).
 - **Oct 16 prototype is on `main`:** keyboard driving, fans, all 10 thrusters (BOOST, LIFT, automatic barrel ROLL, yaw, soft landing), 3 trims, Blank + Reveal Curl + Reveal Jump levels, phone yoke over an HTTPS tunnel (tilt works upright or flat; drag-the-yoke fallback). The spec was updated to match the real Oct 15 reveal (see Milestone 3, "Reveal facts"). AI coach and scenario generator are not built yet.
 - The repo is **private** for now. Make it public before submitting (command in README).
@@ -89,6 +90,9 @@ Split the work so we rarely edit the same file. **Person A = Yuan, Person B = fr
 | `public/traffic.js` | B | Moving cars and people (highway traffic, lot cruisers, rival, shoppers) |
 | `public/vehicles.js` | B | Box-style car/truck meshes (one merged mesh each, fast to draw) |
 | `public/level-utils.js` | B | Shared level helpers (merged paint/boxes, colliders, text signs) |
+| `public/telemetry.js` | shared | Telemetry panel (T): G-G plot, tires, traces, powertrain, aero, fans, thrusters |
+| `public/sound.js` | shared | Procedural Web Audio sound (motor, wind, tire squeal, fans, thrusters, one-shots) |
+| `public/tour.js` | shared | Guided demo (4 scenes with live hints) |
 | `public/levels.js`, `levels/*.json` | B | Level loader and level files |
 | `public/config.js` | shared | All tunable numbers. Small edits only, merge often |
 | `public/shared/protocol.js` | shared | Message formats. **Agree before changing** |
@@ -160,9 +164,14 @@ Base these on the reveal claims below. Make it **fun and readable** first, reali
 - **Mass:** not announced (reports range from under 1,700 kg to ~2,350 kg). We use 1,800 kg.
 
 #### How we model it
-- **Normal driving:** grip about 1.2 g. The car runs wide if you take a turn too fast with the fans off. Motor alone + fans does 0–100 km/h in about 1.55 s.
+- **Physics engine:** Rapier ray-cast suspension at 120 Hz, with our own tire model on top (`car.js`).
+- **Tires:** a simplified Pacejka "magic formula": grip rises with slip angle, peaks around 7–8°, then falls ~15% when sliding. Grip depends on the load on each tire (fans and aero add load; real tires also lose a little grip per kg: load sensitivity). A friction circle shares grip between cornering and driving/braking. Rear tires grip ~10% more (wider), so at the limit the car runs wide instead of spinning. Grass has ~55% grip.
+- **Chassis:** dry mass 1,650 kg (+ up to 250 kg of compressed air), 46/54 weight split, ~2.3 Hz springs, bump stops, anti-roll bars, Ackermann steering.
+- **Powertrain:** 1 MW, power-limited above low speed, 1/3 front, 2/3 rear (three motors). Regen when you lift off, auto-hold when stopped. Traction control, ABS and stability control (ESC: yaw-rate + sideslip) are on.
+- **Aero:** drag (CdA 0.6) and downforce, with an active rear wing that rises above 90 km/h.
+- **Results (headless tests):** 0–60 mph 1.56 s (Performance, fans on), 0.49 s (Rocket boost launch); 100–0 km/h in 33 m; cornering 1.15 g fans off / ~3 g fans on.
 - **Fans (FANS toggle):** force toward the road along the car's own "down" (2× its weight) while wheels touch, so it works when stopped, on ramps, and **upside down** (2 g suction − 1 g gravity). More downforce = more grip (about 3.3 g cornering). Lower ride height plus a cyan glow and air particles.
-- **BOOST (rear thrusters, Thrust + Rocket):** 80 kN forward. Uses air in proportion to force (330 L/s at full), so 200 L ≈ 0.6 s and 600 L ≈ 1.8 s.
+- **BOOST (rear thrusters, Thrust + Rocket):** 80 kN forward. Air is tracked in kg (600 L ≈ 250 kg at 380 bar). Air used = force / 600 m/s exhaust speed (~133 kg/s at full), so 600 L lasts ~1.9 s; thrust fades ~35% as tank pressure drops; the car gets lighter as air is used.
 - **LIFT (corner thrusters, Rocket, hold):** 1.35× weight upward; tip the phone forward/back to lean it. About 6 s of hover on a full tank.
 - **ROLL (Rocket, tap):** automatic, like the reveal car. On the ground the corner thrusters first kick the car up (~3 m hop), then one side's corner thrusters spin it 360° around its long axis in ~0.85 s, and it stops upright. Rolls toward the side you're steering. Off the top of the curl (upside down) it does 1.5 turns and lands upright. Costs 50 L (+40 L for the hop).
 - **Yaw thrusters (Rocket, in the air):** steering turns the car while flying.

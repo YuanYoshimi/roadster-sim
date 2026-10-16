@@ -8,6 +8,10 @@ import { CONFIG } from "./config.js";
 import { Car } from "./car.js";
 import { fetchLevelList, fetchLevel, buildLevel, stepLevel, updateLevel, resetLevel, removeLevel, isGrass } from "./levels.js";
 import { MSG, DRIVE_MODES, makeInput, cleanInput, makeState, parseMessage, socketUrl } from "./shared/protocol.js";
+import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
+import { TelemetryPanel } from "./telemetry.js";
+import { SoundEngine } from "./sound.js";
+import { Tour } from "./tour.js";
 
 // ---------- Renderer, scene, lights ----------
 
@@ -28,7 +32,11 @@ scene.add(sky);
 
 const camera = new THREE.PerspectiveCamera(CONFIG.camera.baseFov, window.innerWidth / window.innerHeight, 0.1, 2000);
 
-scene.add(new THREE.HemisphereLight(0xe8f3ff, 0x3a3f47, 1.1));
+scene.add(new THREE.HemisphereLight(0xe8f3ff, 0x3a3f47, 0.8));
+// Reflections: a soft studio environment makes the clear-coat paint and gold glass look real.
+const environmentMaker = new THREE.PMREMGenerator(renderer);
+scene.environment = environmentMaker.fromScene(new RoomEnvironment(), 0.04).texture;
+scene.environmentIntensity = 0.55;
 const sun = new THREE.DirectionalLight(0xffffff, 2.4);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
@@ -85,6 +93,59 @@ const hud = {
   tip: document.getElementById("tip"),
   loading: document.getElementById("loading"),
 };
+const telemetry = new TelemetryPanel(document.getElementById("telemetry"));
+const sound = new SoundEngine();
+const tourBar = document.getElementById("tourBar");
+const tour = new Tour({
+  loadLevel: async function (file) {
+    for (let i = 0; i < levelList.length; i++) {
+      if (levelList[i].file === file) {
+        await loadLevel(i);
+      }
+    }
+  },
+  setTelemetry: function (visible) {
+    telemetry.setVisible(visible);
+  },
+  showCaption: function (title, text, footer) {
+    document.getElementById("tourTitle").textContent = title;
+    document.getElementById("tourText").textContent = text;
+    document.getElementById("tourFooter").textContent = footer;
+    tourBar.classList.add("show");
+    document.body.classList.add("touring");
+  },
+  hideCaption: function () {
+    tourBar.classList.remove("show");
+    document.body.classList.remove("touring");
+  },
+});
+
+// ---------- Title screen ----------
+
+function showTitle() {
+  document.getElementById("title").classList.remove("hidden");
+  document.body.classList.add("atTitle");
+  cameraModeIndex = CAMERA_MODES.indexOf("showroom");
+}
+
+function hideTitle() {
+  document.getElementById("title").classList.add("hidden");
+  document.body.classList.remove("atTitle");
+  cameraModeIndex = 0;
+  snapCamera = true;
+}
+
+document.getElementById("tourButton").addEventListener("click", function (event) {
+  event.currentTarget.blur();
+  sound.start();
+  hideTitle();
+  tour.start();
+});
+document.getElementById("freeButton").addEventListener("click", function (event) {
+  event.currentTarget.blur();
+  sound.start();
+  hideTitle();
+});
 const modeButtons = document.querySelectorAll("#modes button");
 for (const button of modeButtons) {
   button.addEventListener("click", function () {
@@ -113,6 +174,7 @@ function listenToKeyboard() {
     if (event.target.tagName === "INPUT" || event.target.tagName === "SELECT") {
       return;
     }
+    sound.start(); // browsers only allow sound after a key press or click
     if (!event.repeat) {
       handleKeyPress(event.code);
     }
@@ -148,6 +210,22 @@ function handleKeyPress(code) {
     setMode("rocket");
   } else if (code === "KeyL") {
     loadLevel((currentLevelIndex + 1) % levelList.length);
+  } else if (code === "Escape") {
+    tour.stop();
+    showTitle();
+  } else if (code === "KeyN") {
+    tour.next();
+  } else if (code === "KeyM") {
+    const muted = sound.toggleMute();
+    showMessage(muted ? "Sound off" : "Sound on", 1);
+  } else if (code === "KeyP") {
+    document.body.classList.toggle("presenting");
+    showMessage(document.body.classList.contains("presenting") ? "Presentation mode" : "Presentation mode off", 1.2);
+  } else if (code === "KeyT") {
+    telemetry.toggle();
+    if (telemetry.visible) {
+      hud.help.classList.add("hidden");
+    }
   } else if (code === "KeyH") {
     hud.help.classList.toggle("hidden");
   }
@@ -310,14 +388,19 @@ function sendStateIfDue(now) {
 }
 
 function updatePhoneStatus() {
+  const titleStatus = document.getElementById("titlePhoneStatus");
   if (phone.count > 0) {
     hud.phoneStatus.textContent = "Phone connected";
     hud.phoneStatus.classList.add("ok");
     hud.phoneCard.classList.add("connected");
+    titleStatus.textContent = "Phone connected";
+    titleStatus.classList.add("ok");
   } else {
     hud.phoneStatus.textContent = "Waiting for phone...";
     hud.phoneStatus.classList.remove("ok");
     hud.phoneCard.classList.remove("connected");
+    titleStatus.textContent = "Waiting for phone...";
+    titleStatus.classList.remove("ok");
   }
 }
 
@@ -330,7 +413,9 @@ async function refreshPhoneInfo() {
     if (info.phoneUrl !== shownPhoneUrl) {
       shownPhoneUrl = info.phoneUrl;
       hud.qr.src = "/api/qr.svg?t=" + Date.now();
+      document.getElementById("titleQr").src = hud.qr.src;
       hud.phoneUrl.textContent = info.phoneUrl;
+      document.getElementById("titlePhoneUrl").textContent = info.phoneUrl;
       if (!info.tunnel) {
         hud.phoneUrl.textContent = info.phoneUrl + " (iPhone needs HTTPS: run npm run phone)";
       } else if (info.tunnelTool === "ngrok") {
@@ -400,7 +485,7 @@ hud.levelSelect.addEventListener("change", function () {
 
 // ---------- Camera ----------
 
-const CAMERA_MODES = ["chase", "cockpit", "overhead"];
+const CAMERA_MODES = ["chase", "cockpit", "overhead", "showroom"];
 let cameraModeIndex = 0;
 let snapCamera = true; // jump straight to the right spot (after a reset or level load)
 const cameraOffset = new THREE.Vector3(); // camera spot, relative to the car
@@ -408,6 +493,8 @@ const lookAheadOffset = new THREE.Vector3(); // where it looks, relative to the 
 const flatForward = new THREE.Vector3(0, 0, 1);
 const TURN_AROUND = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
+const COCKPIT_TILT = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -0.08); // look slightly down
+let showroomAngle = 0.8;
 let stuntBlend = 0; // 0 = normal chase camera, 1 = side stunt camera
 const stuntSide = new THREE.Vector3(-1, 0, 0);
 
@@ -425,11 +512,22 @@ function updateCamera(dt) {
 
   const mode = CAMERA_MODES[cameraModeIndex];
   const settings = CONFIG.camera;
+  car.model.setCockpitView(mode === "cockpit");
   if (mode === "cockpit") {
-    // Driver's seat, looking where the car looks.
-    const eye = new THREE.Vector3(0.35, 0.38, 0.0).applyQuaternion(carRotation).add(carPosition);
-    camera.position.copy(eye);
-    camera.quaternion.copy(carRotation).multiply(TURN_AROUND); // cameras look down -Z, the car faces +Z
+    // The driver's seat: you see the yoke, the screens, the hood and the fenders.
+    // The head leans a little with the g-forces, like a real driver's.
+    const eye = car.model.cockpitEye.clone();
+    eye.x = eye.x - car.telemetry.gLat * 0.025;
+    eye.z = eye.z - car.telemetry.gLong * 0.02;
+    camera.position.copy(eye.applyQuaternion(carRotation).add(carPosition));
+    camera.quaternion.copy(carRotation).multiply(TURN_AROUND).multiply(COCKPIT_TILT); // cameras look down -Z, the car faces +Z
+    snapCamera = true;
+  } else if (mode === "showroom") {
+    // Slowly circle the car, like a car show.
+    showroomAngle = showroomAngle + dt * 0.25;
+    const around = new THREE.Vector3(Math.sin(showroomAngle) * 6.2, 1.5, Math.cos(showroomAngle) * 6.2);
+    camera.position.copy(carPosition).add(around);
+    camera.lookAt(carPosition.x, carPosition.y - 0.1, carPosition.z);
     snapCamera = true;
   } else {
     let distance = settings.chaseDistance;
@@ -489,7 +587,10 @@ function updateCamera(dt) {
 
   // Widen the view at speed so it feels fast.
   const speedFactor = Math.min(1, car.speedKmh / settings.fastFovKmh);
-  const fov = settings.baseFov + (settings.fastFov - settings.baseFov) * speedFactor;
+  let fov = settings.baseFov + (settings.fastFov - settings.baseFov) * speedFactor;
+  if (mode === "cockpit") {
+    fov = fov + 10;
+  }
   if (Math.abs(camera.fov - fov) > 0.05) {
     camera.fov = fov;
     camera.updateProjectionMatrix();
@@ -530,10 +631,14 @@ function handleCarEvents() {
       showMessage("Flipped! Press R (or RESET on the phone)", 3);
     } else if (name === "barrel_roll") {
       showMessage("Barrel roll!", 1.5);
+      sound.play("barrel_roll");
+    } else if (name === "landing") {
+      sound.play("landing");
     } else if (name === "big_jump") {
       showMessage("Big air!", 1.5);
     } else if (name === "crash") {
       snapShake = 0.25;
+      sound.play("crash");
     }
   }
 }
@@ -587,16 +692,20 @@ function frame(now) {
       airborne: car.airborne,
       speedKmh: car.speedKmh,
       heading: Math.atan2(forward.x, forward.z),
+      rolling: car.rolling,
     }, dt);
     if (status.reached) {
       showMessage(status.message, 3);
       pendingEvents.push("goal_reached");
+      sound.play("goal");
     }
     if (status.failed) {
       showMessage(status.message, 4);
       pendingEvents.push("goal_failed");
+      sound.play("fail");
     }
     hud.timer.textContent = status.line;
+    tour.update(dt, { car: car, level: level, status: status });
   }
 
   // Fell off the edge of the world.
@@ -611,6 +720,8 @@ function frame(now) {
     snapShake = Math.max(0, snapShake - dt);
   }
   updateHud();
+  telemetry.update(car.telemetry, dt);
+  sound.update(car);
   sendStateIfDue(now);
   renderer.render(scene, camera);
 }
@@ -671,6 +782,7 @@ for (let i = 0; i < levelList.length; i++) {
 await loadLevel(startIndex);
 setMode("rocket");
 listenToKeyboard();
+showTitle();
 connectSocket();
 refreshPhoneInfo();
 hud.loading.style.display = "none";

@@ -66,6 +66,10 @@ The tunnel address changes each time you restart `npm run phone`, so rescan the 
 | Camera (chase / cockpit / overhead) | | C |
 | Next level | | L |
 | Recenter steering | CENTER | |
+| Telemetry panel | | T |
+| Sound on/off | | M |
+| Presentation mode (clean screen) | | P |
+| Menu / guided demo: next scene | | Esc / N |
 
 Trims, as in the reveal: **Performance** (fans only), **Thrust** (fans + 4 rear thrusters, 200 L of air), **Rocket** (all 10 thrusters, 600 L of air; this is the default). In Rocket mode, steering while airborne fires the front yaw thrusters, and the corner thrusters soften hard landings by themselves.
 
@@ -78,10 +82,16 @@ Trims, as in the reveal: **Performance** (fans only), **Thrust** (fans + 4 rear 
 
 The phone shows **tilt OK** (green) when motion data is arriving. If it says **tilt: no data**, reload the page, tap Start, then tap **Allow**. Meanwhile you can steer by dragging the yoke.
 
+## For the demo
+
+- The game opens on a **title screen** with the phone QR code and the car turning in a showroom. **Guided demo** runs four scenes (the curl stunt, the parking lot, the highway jam, a circuit lap) with hints that react to what you're doing. Press N to skip a scene, Esc for the menu.
+- **P** hides the help panels for the projector. **T** opens the telemetry panel (G-G plot, all four tires, traces, thrusters).
+- Sound is generated live (motor, wind, tire squeal, fans, thrusters). Press M to mute.
+
 ## How it works
 
 - `server.js` is an Express server plus a WebSocket relay. The phone sends its controls about 30× per second, and the server passes them to the game screen. Measured phone → tunnel → server → game latency: about 20 ms.
-- The game uses three.js for graphics and Rapier for physics: a ray-cast vehicle with fan suction (extra downforce = more grip), a thruster air tank, and a landing assist.
+- The game uses three.js for graphics and Rapier for physics (120 Hz). Rapier does the suspension, and our own tire model does the grip: a "magic formula" tire with load sensitivity and a friction circle, plus a 1 MW power-limited powertrain with regen, TC/ABS/ESC, anti-roll bars, aero drag and downforce, and fan suction. The thrusters use real air mass and pressure numbers. Everything feeds the telemetry panel.
 - All tunable numbers are in `public/config.js`. All message formats are in `public/shared/protocol.js`.
 - Libraries are served straight from `node_modules` with an import map, so there's no build step.
 

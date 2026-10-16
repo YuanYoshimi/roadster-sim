@@ -6,17 +6,20 @@
 export const CONFIG = {
   physics: {
     gravity: 9.81,
-    timestep: 1 / 60, // physics runs at a fixed 60 steps per second
-    maxStepsPerFrame: 4, // if the laptop lags, don't try to catch up forever
+    timestep: 1 / 120, // physics runs at a fixed 120 steps per second (tire forces need small steps)
+    maxStepsPerFrame: 8, // if the laptop lags, don't try to catch up forever
   },
 
   car: {
-    mass: 1800, // not announced; reports range from "under 1,700" to ~2,350 kg
+    // Mass without the compressed air. The air in the tank adds up to 250 kg (Rocket trim),
+    // and the car gets lighter as the thrusters use it. Reports range from ~1,700 to ~2,350 kg.
+    dryMass: 1650,
     // Physics box for the body (half sizes). The 3D model is drawn to roughly match.
     halfWidth: 0.95,
     halfHeight: 0.3,
     halfLength: 2.15,
     centerOfMassY: -0.25, // lower center of mass = harder to flip over
+    centerOfMassZ: -0.12, // a little behind the middle: about 46% front / 54% rear weight
 
     // Wheels. Positions are relative to the center of the body.
     wheelRadius: 0.36,
@@ -25,27 +28,48 @@ export const CONFIG = {
     wheelFrontZ: 1.25,
     wheelRearZ: -1.25,
     suspensionRestLength: 0.3,
-    suspensionStiffness: 38, // higher = stiffer (Rapier multiplies this by the car's mass)
+    suspensionStiffness: 50, // higher = stiffer (Rapier multiplies this by the car's mass); ~2.3 Hz ride.
+    // Fan cars need stiff springs: 2 g of suction plus a fast curve can be 5 g on the springs.
     suspensionCompression: 2.0, // damping while compressing
     suspensionRelaxation: 2.5, // damping while extending
     maxSuspensionForce: 200000, // high, so the fans can push the car down hard
+    bumpStopStart: 0.2, // meters of squash where the rubber bump stops start pushing back
+    bumpStopStiffness: 3000000, // they push back harder and harder (force = stiffness x overlap^2)
+    antiRollFront: 26000, // anti-roll bars (newtons per meter of left/right difference): less body roll
+    antiRollRear: 18000, // a stiffer front bar than rear = a little understeer, which feels safe
 
-    // Tire grip. Roughly "how many g the car can corner with" before it slides wide.
-    grip: 1.2,
+    // Tires (a simplified "magic formula" tire, the model racing sims use).
+    tireGrip: 1.25, // peak friction: about how many g the car can corner with (fans off)
+    rearGripBias: 1.1, // wider rear tires grip more, so at the limit the car runs wide instead of spinning
+    tireLoadSensitivity: 0.08, // tires grip a bit less per kg when pressed down harder (real tires do this)
+    tireStiffness: 18, // how quickly grip builds with slip angle (peak at about 7-8 degrees)
+    tireShape: 1.35, // how much grip is left once the tire is fully sliding (~85% of peak)
+    tireCurvature: 0,
+    tractionLimit: 0.92, // traction control and ABS keep wheels just below the limit, leaving room to steer
+    stabilityControl: true, // ESC: stops the car from spinning out (set false for drifting)
+    stabilityStrength: 6, // how quickly ESC pulls the car back in line
 
-    // Driving
-    // Per wheel, all-wheel drive. More than the tires can grip, so fans help launches.
-    // Tuned so fans + motor alone do 0-60 mph in about 1.6 s (reveal: Performance trim "under 1.6 s").
-    engineForce: 9500,
-    reverseForce: 2500,
-    brakeForce: 90, // braking impulse per wheel per step
-    coastBrake: 2, // tiny brake when no pedal is pressed, so the car rolls to a stop
-    topSpeedKmh: 338, // reveal: 210 mph on the motor alone (thrusters can push past it)
-    airDrag: 0.4, // force = airDrag * speed^2
+    // Powertrain: three motors, one front and two rear (an EV has no gears).
+    motorPowerKW: 1000, // reveal: "over 1 MW"
+    maxDriveForce: 28000, // newtons at low speed (the tires limit it anyway)
+    frontDriveShare: 0.33, // one of the three motors drives the front wheels
+    reverseForce: 4000,
+    topSpeedKmh: 338, // reveal: 210 mph on the motors (thrusters can push past it)
+    maxBrakeG: 1.4, // brake request; the tires limit it (ABS)
+    brakeFrontShare: 0.62,
+    regenG: 0.12, // lifting off the gas slows the car (regenerative braking, like a real Tesla)
+    rollingResistance: 0.012,
+
+    // Aerodynamics (reveal: "active aero", a wing that deploys)
+    airDensity: 1.2,
+    dragArea: 0.6, // drag coefficient x frontal area (m^2)
+    downforceArea: 1.1, // downforce coefficient x area (m^2), with the wing up
+    aeroFrontShare: 0.45,
+    wingDeployKmh: 90, // the rear wing rises above this speed
 
     // Steering gets smaller at high speed so the car stays drivable.
     maxSteerAngle: 0.5, // at a standstill
-    highSpeedSteerAngle: 0.12, // at highSpeedForSteerKmh
+    highSpeedSteerAngle: 0.1, // at highSpeedForSteerKmh
     highSpeedForSteerKmh: 200,
     steerSpeed: 5, // how fast the wheels turn toward the target angle
 
@@ -63,11 +87,13 @@ export const CONFIG = {
   thrusters: {
     // Cold-gas thrusters fed by a compressed-air tank. Reveal: 10 thrusters on the Rocket trim:
     // 4 rear (push forward), 4 pointing down at the corners (lift/roll), 2 at the front (yaw).
-    rearForce: 80000, // newtons from the 4 rear ports (reveal: "over 80 kN", about 4.5 g here)
+    rearForce: 80000, // newtons from the 4 rear ports (reveal: "over 80 kN", about 4 g here)
+    exhaustSpeed: 600, // m/s of gas leaving the nozzle: air used per second = force / exhaustSpeed
     tankLitersThrust: 200, // reveal: Thrust trim stores 200 L
     tankLitersRocket: 600, // reveal: Rocket trim adds 400 L more (it replaces the passenger seat)
-    // Air use scales with force. At full rear thrust 600 L lasts ~1.8 s (estimates say 1.5-2 s).
-    litersPerSecondAtFullRear: 330,
+    tankPressureBar: 380, // reveal photos: 5,500 psi
+    airKgPerLiter: 0.415, // air at 380 bar: 600 L holds ~250 kg (reveal: "about 250 kg")
+    pressureFade: 0.35, // thrust drops as the tank empties: at empty, thrust is 35% lower
     refillSeconds: 10, // empty to full. The real car needs hours; this is a game.
     refillDelay: 0.6, // wait this long after thrusting before refilling
   },
@@ -83,8 +109,8 @@ export const CONFIG = {
     // It's automatic like the reveal car: it hops if needed, rolls, and stops upright.
     rollSeconds: 0.85, // time for one 360-degree roll
     rollHopSpeed: 7.5, // upward kick when rolling from the ground (about a 3 m hop)
-    rollAirLiters: 50, // air used by one roll
-    hopAirLiters: 40, // air used by the hop
+    rollAirKg: 20, // air used by one roll
+    hopAirKg: 16, // air used by the hop
 
     // Soft landing: when falling fast near the ground, the down thrusters fire on their own
     // (reveal: the car "eased itself to a landing").

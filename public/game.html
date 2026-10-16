@@ -105,13 +105,80 @@
       font-size: 18px; padding: 8px 18px; border-radius: 10px; background: var(--panel); display: none;
     }
 
+
+    /* Telemetry ("pit wall") panel: T to toggle */
+    #telemetry { right: 16px; bottom: 16px; width: 560px; padding: 12px 14px; display: none; font-size: 12px; color: var(--muted); }
+    .telHead { font-weight: 800; letter-spacing: 0.12em; color: var(--text); margin-bottom: 8px; }
+    .telKey { font-weight: 500; letter-spacing: 0; color: var(--muted); margin-left: 8px; }
+    .telTop { display: flex; gap: 12px; align-items: flex-start; }
+    #ggCanvas { width: 150px; height: 150px; background: rgba(255,255,255,0.03); border-radius: 10px; }
+    .tireGrid { flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+    .tire { background: rgba(255,255,255,0.05); border-radius: 8px; padding: 6px 8px; font-variant-numeric: tabular-nums; }
+    .tireName { color: var(--text); font-weight: 700; }
+    .tireBar { height: 6px; background: rgba(255,255,255,0.1); border-radius: 3px; overflow: hidden; margin: 4px 0; }
+    .tireFill { height: 100%; width: 0; }
+    .tireNums { color: var(--text); line-height: 1.4; }
+    .tireCaption { grid-column: 1 / 3; }
+    .grass { color: #7bd389; font-weight: 700; }
+    .air { color: #6aa9ff; font-weight: 700; }
+    #traceCanvas { width: 100%; height: 95px; margin-top: 8px; background: rgba(255,255,255,0.03); border-radius: 8px; }
+    .telCaption { font-size: 11px; color: var(--muted); margin-top: 3px; }
+    .telGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 16px; margin-top: 8px; }
+    .telTitle { color: var(--text); font-weight: 700; margin-bottom: 2px; }
+    .telRow { display: flex; justify-content: space-between; gap: 8px; line-height: 1.5; }
+    .telRow b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+    .light { padding: 0 5px; border-radius: 4px; margin-left: 4px; border: 1px solid rgba(255,255,255,0.15); color: var(--muted); }
+    .light.on { background: #f5c542; color: #111; border-color: #f5c542; }
+
+
+    /* Title screen (the car slowly turns behind it) */
+    #title {
+      position: absolute; inset: 0; z-index: 30; display: flex; align-items: center;
+      background: linear-gradient(90deg, rgba(8,10,14,0.93) 0%, rgba(8,10,14,0.72) 42%, rgba(8,10,14,0.05) 75%);
+    }
+    #title.hidden { display: none; }
+    .titleInner { padding: 0 6vw; max-width: 640px; }
+    .kicker { color: var(--fans); font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; font-size: 13px; }
+    #title h1 { font-size: 58px; line-height: 1.02; margin: 14px 0 18px; letter-spacing: -0.02em; }
+    #title p { color: #c6ccd6; font-size: 17px; line-height: 1.5; margin: 0 0 26px; }
+    .titleButtons { display: flex; gap: 12px; margin-bottom: 18px; }
+    .titleButtons button {
+      font: inherit; font-size: 18px; font-weight: 700; padding: 14px 26px; border-radius: 12px; cursor: pointer;
+      border: 1px solid rgba(255,255,255,0.2); background: rgba(255,255,255,0.08); color: var(--text);
+    }
+    .titleButtons button.primary { background: var(--text); color: #0b0d10; border-color: var(--text); }
+    .titleKeys { color: var(--muted); font-size: 13px; margin-bottom: 26px; }
+    .titleQr { display: flex; gap: 14px; align-items: center; }
+    #titleQr { width: 150px; height: 150px; background: white; border-radius: 10px; padding: 6px; }
+    #titlePhoneStatus { font-weight: 700; margin-top: 6px; }
+    #titlePhoneStatus.ok { color: var(--ok); }
+    #titlePhoneUrl { font-size: 11px; color: var(--muted); word-break: break-all; max-width: 300px; }
+    body.atTitle #dash, body.atTitle #topRight, body.atTitle #phoneCard, body.atTitle #telemetry { display: none !important; }
+
+    /* Tour captions */
+    #tourBar {
+      position: absolute; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 20; display: none;
+      width: min(900px, 70vw); padding: 14px 22px; border-radius: 14px; text-align: center;
+      background: rgba(12, 15, 20, 0.84); border: 1px solid rgba(255,255,255,0.1);
+    }
+    #tourBar.show { display: block; }
+    #tourTitle { color: var(--fans); font-weight: 700; font-size: 13px; letter-spacing: 0.1em; text-transform: uppercase; }
+    #tourText { font-size: 24px; font-weight: 700; margin: 6px 0 4px; }
+    #tourFooter { font-size: 12px; color: var(--muted); }
+    body.touring #message { bottom: 150px; }
+
+    /* Presentation mode (P): a clean screen for the projector */
+    body.presenting #help, body.presenting #source { display: none; }
+    body.presenting #phoneCard #qr { width: 64px; height: 64px; }
+    body.presenting #phoneUrl { display: none; }
+
     #loading {
       position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
       font-size: 20px; color: var(--muted); background: #0b0d10;
     }
   </style>
 </head>
-<body>
+<body class="atTitle">
   <canvas id="scene"></canvas>
 
   <div id="dash" class="panel">
@@ -137,6 +204,7 @@
       <b>Shift</b> lift &middot; <b>Q/E</b> barrel roll &middot; <b>&uarr;/&darr;</b> lean (Rocket)<br>
       <b>1/2/3</b> trim: Performance / Thrust / Rocket<br>
       <b>R</b> reset &middot; <b>C</b> camera &middot; <b>L</b> next level<br>
+      <b>T</b> telemetry &middot; <b>M</b> sound &middot; <b>P</b> presentation<br>
       <b>H</b> hide this
     </div>
   </div>
@@ -149,6 +217,31 @@
       <div id="phoneStatus">Waiting for phone...</div>
     </div>
   </div>
+
+  <div id="telemetry" class="panel"></div>
+
+  <div id="title">
+    <div class="titleInner">
+      <div class="kicker">Roadster Sim · Tokyo Agent Hackathon</div>
+      <h1>Learn to drive<br>the impossible car.</h1>
+      <p>Tesla's new Roadster sticks to the road with 2 g of fan suction and flies on 10 cold-gas thrusters. Nobody knows how to drive it. Steer it with your phone.</p>
+      <div class="titleButtons">
+        <button id="tourButton" class="primary">&#9654; Guided demo</button>
+        <button id="freeButton">Free drive</button>
+      </div>
+      <div class="titleKeys">Keyboard works too: W/S A/D &middot; F fans &middot; Space boost &middot; Shift lift &middot; Q/E roll &middot; T telemetry &middot; Esc menu</div>
+      <div class="titleQr">
+        <img id="titleQr" alt="QR code for the phone controller">
+        <div>
+          <div>Scan to drive with your phone</div>
+          <div id="titlePhoneUrl"></div>
+          <div id="titlePhoneStatus">Waiting for phone...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="tourBar"><div id="tourTitle"></div><div id="tourText"></div><div id="tourFooter"></div></div>
 
   <div id="message"></div>
   <div id="tip"></div>

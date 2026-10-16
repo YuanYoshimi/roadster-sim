@@ -10,7 +10,8 @@
 // Car kinds: compact, sedan, suv, pickup, van, semi.
 // Car behaviors: parked, stopped, path (with "path": [[x, z], ...], "loop"), rival.
 // Goal types:
-//   reach - get to the green zone (add "timeLimit": seconds for a countdown)
+//   reach - get to the green zone (add "timeLimit": seconds for a countdown,
+//           or "after": "barrel_roll" to only count it after a barrel roll)
 //   lap   - drive a lap of the track through every checkpoint (needs a track prop)
 //   park  - park in the open spot of a parking_lot before the rival does
 
@@ -164,6 +165,7 @@ function resetGoal(built) {
     failed: false,
     finalLine: "",
     timerStart: null,
+    unlocked: false, // for goals that need something done first (like a barrel roll)
     // lap goal
     lapStarted: false,
     nextCheckpoint: 0,
@@ -196,10 +198,14 @@ function updateReachGoal(built, car, status) {
     status.line = "Time left " + formatTime(Math.max(0, goal.timeLimit - elapsed));
   }
 
+  if (goal.after === "barrel_roll" && car.rolling) {
+    state.unlocked = true;
+  }
   const dx = car.position.x - goal.x;
   const dz = car.position.z - goal.z;
   const inside = Math.sqrt(dx * dx + dz * dz) < goal.radius;
-  if (inside && !car.airborne) {
+  const allowed = goal.after === "" || state.unlocked;
+  if (inside && !car.airborne && allowed) {
     state.done = true;
     status.reached = true;
     status.message = "Goal reached!";
@@ -640,7 +646,8 @@ function buildCar(built, car, index) {
 
 function buildGoal(built, goal) {
   const type = goal.type || "reach";
-  built.goal = { type: type, text: goal.text || "", timeLimit: goal.timeLimit || 0 };
+  // "after": "barrel_roll" means the goal only counts once you've done a barrel roll.
+  built.goal = { type: type, text: goal.text || "", timeLimit: goal.timeLimit || 0, after: goal.after || "" };
   if (type !== "reach") {
     return; // lap and park goals use the track's arch and the parking lot's arrow
   }

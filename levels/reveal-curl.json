@@ -13,6 +13,6 @@
     { "type": "cone", "x": 6, "z": -60 }
   ],
   "cars": [],
-  "goal": { "type": "reach", "x": 0, "z": -35, "radius": 18, "text": "Fans ON, drive up the curl, ROLL off the top, land in the green zone" },
+  "goal": { "type": "reach", "x": 0, "z": -35, "radius": 18, "after": "barrel_roll", "text": "Fans ON, drive up the curl, ROLL off the top, land in the green zone" },
   "checkpoints": []
 }
