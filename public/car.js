@@ -95,6 +95,9 @@ export class Car {
     this.lastVelocity = new THREE.Vector3();
     this.crashCooldown = 0;
     this.spawn = { x: 0, y: 0, z: 0, heading: 0 };
+    // The game can set this to a function(collider) that returns a grip multiplier
+    // for whatever a wheel is touching (for example less grip on grass).
+    this.surfaceGrip = null;
 
     // Physics runs at a fixed rate, but the screen may refresh faster.
     // We remember the last two physics poses and draw the car in between them.
@@ -236,9 +239,15 @@ export class Car {
       body.addForce(scaled(up, -suction), true);
     }
     // More downforce already means more grip. extraGrip can add even more.
+    // Each wheel also checks what it's driving on (grass is slippery).
     const grip = c.grip * (1 + (CONFIG.fans.extraGrip - 1) * this.fanPower);
     for (let i = 0; i < 4; i++) {
-      vehicle.setWheelFrictionSlip(i, grip);
+      let surface = 1;
+      const ground = vehicle.wheelGroundObject(i);
+      if (ground && this.surfaceGrip) {
+        surface = this.surfaceGrip(ground);
+      }
+      vehicle.setWheelFrictionSlip(i, grip * surface);
     }
 
     // ----- Thrusters and the air tank -----

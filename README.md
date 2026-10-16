@@ -19,7 +19,7 @@ An AI coach powered by **ai& Inference** is coming next.
 |---|---|
 | Driving, fans (incl. upside down), BOOST, LIFT, barrel ROLL, soft landing, 3 trims | AI coach (Milestone 4) |
 | Phone yoke over HTTPS tunnel (tilt upright or flat, drag fallback) | AI scenario generator (Milestone 6) |
-| Levels from JSON: Blank Test Area, Reveal Curl, Reveal Jump | Slalom and parking-steal levels, sound |
+| 6 levels: Blank, Reveal Curl, Reveal Jump, Figure-8 Circuit, Warehouse Parking, Rush-Hour Expressway | Sound, AI-generated scenarios |
 
 ## Setup
 
@@ -69,6 +69,11 @@ The tunnel address changes each time you restart `npm run phone`, so rescan the 
 
 Trims, as in the reveal: **Performance** (fans only), **Thrust** (fans + 4 rear thrusters, 200 L of air), **Rocket** (all 10 thrusters, 600 L of air; this is the default). In Rocket mode, steering while airborne fires the front yaw thrusters, and the corner thrusters soften hard landings by themselves.
 
+**Scenarios:**
+- **Figure-8 Circuit (Suzuka-style):** set a lap time through 12 green gates. The track crosses over itself on a bridge, and the grass is slippery.
+- **Warehouse Store Parking (Costco-style):** the lot is full except one spot, and a purple SUV is heading for it. Park first, lined up and stopped, or fly over the rows.
+- **Rush-Hour Expressway:** dense traffic that drives on the left like in Japan, and an accident blocking every lane at 1.3 km. Reach the exit in 80 s. Hint: LIFT and lean forward.
+
 **Try the reveal stunt:** pick **Reveal Curl**, press FANS, drive up the curl at about 50–60 km/h, and tap ROLL as you come off the top upside down.
 
 The phone shows **tilt OK** (green) when motion data is arriving. If it says **tilt: no data**, reload the page, tap Start, then tap **Allow**. Meanwhile you can steer by dragging the yoke.
@@ -91,7 +96,9 @@ Put `AI_BASE_URL`, `AI_API_KEY` and `AI_MODEL` in `.env` (copy `.env.example`). 
 ## Add a level
 
 1. Copy `levels/blank.json` to `levels/my-level.json` and edit it. Positions are in meters, and `heading` is in degrees (0 = +Z, 90 = +X).
-   - Prop types: `box`, `wall`, `ramp`, `curl` (bends up and over until upside down), `cone`, `checkpoint`, `parking_spot`, `paint` (flat color, no collision).
+   - Prop types: `box`, `wall`, `ramp`, `curl` (bends up and over until upside down), `cone`, `checkpoint`, `parking_spot`, `paint` (flat color, no collision), `grandstand`.
+   - Generator props that build a whole scene: `track`, `parking_lot`, `highway` (see `levels/circuit.json`, `levels/warehouse-parking.json`, `levels/expressway.json` and the notes in `CLAUDE.md`).
+   - Goals: `reach` (optional `timeLimit`), `lap`, `park`.
    - Car kinds: `compact`, `sedan`, `suv`, `pickup`, `van`, `semi` (behavior `parked` for now).
    - Goal: `{ "type": "reach", "x", "z", "radius", "text" }`.
 2. Add it to `levels/index.json`.

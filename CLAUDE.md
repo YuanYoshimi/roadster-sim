@@ -8,6 +8,7 @@
 
 ## Current status (update as you go)
 
+- **Scenarios added:** Figure-8 Circuit (Suzuka-style), Warehouse Store Parking (Costco-style), Rush-Hour Expressway, built from generator props (see Milestone 5).
 - **Oct 16 prototype is on `main`:** keyboard driving, fans, all 10 thrusters (BOOST, LIFT, automatic barrel ROLL, yaw, soft landing), 3 trims, Blank + Reveal Curl + Reveal Jump levels, phone yoke over an HTTPS tunnel (tilt works upright or flat; drag-the-yoke fallback). The spec was updated to match the real Oct 15 reveal (see Milestone 3, "Reveal facts"). AI coach and scenario generator are not built yet.
 - The repo is **private** for now. Make it public before submitting (command in README).
 - `npm run phone` tries cloudflared, then falls back to ngrok (some networks block Cloudflare quick tunnels). `npm run phone:ngrok` skips straight to ngrok.
@@ -84,6 +85,10 @@ Split the work so we rarely edit the same file. **Person A = Yuan, Person B = fr
 | `public/car.js` | B | Car physics: driving, fans, thruster tank, modes |
 | `public/car-model.js` | B | Stylized car mesh (swappable for .glb later) |
 | `public/effects.js` | B | Particle effects (thruster vapor, fan air) |
+| `public/scenery.js` | B | Generator props: `track`, `parking_lot`, `highway` |
+| `public/traffic.js` | B | Moving cars and people (highway traffic, lot cruisers, rival, shoppers) |
+| `public/vehicles.js` | B | Box-style car/truck meshes (one merged mesh each, fast to draw) |
+| `public/level-utils.js` | B | Shared level helpers (merged paint/boxes, colliders, text signs) |
 | `public/levels.js`, `levels/*.json` | B | Level loader and level files |
 | `public/config.js` | shared | All tunable numbers. Small edits only, merge often |
 | `public/shared/protocol.js` | shared | Message formats. **Agree before changing** |
@@ -207,6 +212,13 @@ Base these on the reveal claims below. Make it **fun and readable** first, reali
 
 - Prop types to start: `box`, `ramp`, `curl` (the reveal's curved ramp that bends up and over until upside down: `radius`, `width`, `degrees`), `wall`, `cone`, `checkpoint`, `parking_spot`, `paint` (flat color, no collision).
 - Parked car kinds: `compact` (robotaxi-sized), `sedan`, `suv`, `pickup`, `van`, `semi`. Generic shapes only, never Tesla models.
+- **Generator props** (in `scenery.js`) build a whole scene from a few numbers, which keeps levels short and easy for the AI scenario generator (Milestone 6) to write:
+  - `track`: `points` [[x, z, height]...] joined into a smooth closed loop (heights make bridges), `width`, `startAt`, `checkpoints`. Builds the road, curbs, bridge walls and pillars, the start line, and lap gates. Use with ground type `grass` (less grip off track) and goal type `lap`.
+  - `parking_lot`: `pairs`, `spotsPerRow`, `freeSpot` [pair, row, index], `rival`, `rivalSpeedKmh`, `cruisers`, `shoppers`, `carts`, `seed`. A full lot with one open spot, cars hunting for parking, a rival heading for your spot, shoppers, and a store. Use with goal type `park`.
+  - `highway`: `length`, `lanesEachWay`, `laneWidth`, `traffic` { `count`, `oncoming`, `speedsKmh` per lane, `jam` { `z`, `length` } }. Divided highway driving on the left (Japan), guard rails, lamps, exit signs, traffic that keeps a safe gap and queues, and an accident jam across every lane.
+- Car behaviors (in `cars` or made by generators): `parked`, `stopped`, `path` (follows `path` points, `loop`), `rival` (path ending in your spot), `lane` (highway traffic), `walker` (shoppers). Moving ones are kinematic bodies that slow down or wait for the player.
+- Goal types: `reach` (green zone, optional `timeLimit`), `lap` (gates + lap timer), `park` (stop lined up in the open spot before the rival).
+- Ground types: `flat` (asphalt grid) and `grass` (less grip, `CONFIG.surfaces.grassGrip`).
 - Car behaviors to start: `parked`, `drive_straight` (constant speed along heading), `follow_path` (list of points), `rival_to_spot` (drives toward a parking spot).
 - `"model"` can later point to a `.glb` file (e.g. a Tokyo street chunk from Project PLATEAU, or a racetrack). Load it with GLTFLoader and generate a static trimesh collider from it. Write this loader path even if no `.glb` exists yet.
 - A **level select menu** on the game screen (and ideally the phone).
@@ -214,6 +226,9 @@ Base these on the reveal claims below. Make it **fun and readable** first, reali
   1. `blank.json`: flat ground, one ramp, a few cones. **Default.**
   2. `reveal-curl.json`: the reveal's main stunt. A runway into a 10 m radius curl. Fans on, drive up and over (upside down at ~20 m), ROLL off the top, soft-land in the green zone.
   3. `tesla-event.json` ("Reveal Jump"): a runway, a big ramp, and the reveal lineup to **jump over** (compact robotaxi, pickup, semi, SUV, sedan). Hold LIFT for height, tap ROLL for style. Goal: clear them all and land.
+  4. `circuit.json` ("Figure-8 Circuit, Suzuka-style"): ~2.7 km figure-8 with a bridge crossover, grass runoff, 12 gates, lap timer. (Inspired by Suzuka's layout, not an exact copy.)
+  5. `warehouse-parking.json` ("Warehouse Store Parking, Costco-style"): full lot, one open spot, a rival SUV heading for it (~33 s), cruisers and shoppers. Park first, or fly over the rows. No real store branding.
+  6. `expressway.json` ("Rush-Hour Expressway"): 2.4 km, 3 lanes each way, ~70 moving cars, an accident jam at 1.3 km blocking every lane. Reach the exit in 80 s (fly over the jam with LIFT).
   3. `parking-steal.json`: a simple block-city street. A free parking spot is ahead, and a rival car is heading for it. Goal: get into the spot first. You'll need the thruster and/or fans to win.
   4. `slalom.json`: cones and checkpoints with a timer. Teaches fan grip.
 - Later, optionally: `tokyo-shibuya.json` using a PLATEAU model chunk (free 3D Tokyo city data, free for commercial use, FBX → convert to glb). **Not in the first build.**

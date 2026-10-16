@@ -10,6 +10,7 @@
     {
       "imports": {
         "three": "/vendor/three/build/three.module.js",
+        "three/addons/": "/vendor/three/examples/jsm/",
         "@dimforge/rapier3d-compat": "/vendor/rapier/rapier.mjs"
       }
     }
@@ -75,6 +76,8 @@
       color: var(--text); border: 1px solid var(--panel-border); font-size: 14px;
     }
     #goalText { font-size: 13px; color: var(--text); max-width: 260px; }
+    #timer { font-size: 18px; font-weight: 700; color: var(--ok); font-variant-numeric: tabular-nums; max-width: 260px; }
+    #timer:empty { display: none; }
     #help { font-size: 12px; color: var(--muted); line-height: 1.6; }
     #help b { color: var(--text); font-weight: 600; }
     #help.hidden { display: none; }
@@ -127,6 +130,7 @@
   <div id="topRight" class="panel">
     <select id="levelSelect"></select>
     <div id="goalText"></div>
+    <div id="timer"></div>
     <div id="help">
       <b>W/S</b> gas / brake &middot; <b>A/D</b> steer<br>
       <b>F</b> fans &middot; <b>Space</b> rear thrust<br>

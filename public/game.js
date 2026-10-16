@@ -6,7 +6,7 @@ import * as THREE from "three";
 import RAPIER from "@dimforge/rapier3d-compat";
 import { CONFIG } from "./config.js";
 import { Car } from "./car.js";
-import { fetchLevelList, fetchLevel, buildLevel, updateLevel, removeLevel } from "./levels.js";
+import { fetchLevelList, fetchLevel, buildLevel, stepLevel, updateLevel, resetLevel, removeLevel, isGrass } from "./levels.js";
 import { MSG, DRIVE_MODES, makeInput, cleanInput, makeState, parseMessage, socketUrl } from "./shared/protocol.js";
 
 // ---------- Renderer, scene, lights ----------
@@ -56,6 +56,12 @@ await RAPIER.init();
 const world = new RAPIER.World({ x: 0, y: -CONFIG.physics.gravity, z: 0 });
 world.timestep = CONFIG.physics.timestep;
 const car = new Car(RAPIER, world, scene);
+car.surfaceGrip = function (collider) {
+  if (level && isGrass(level, collider)) {
+    return CONFIG.surfaces.grassGrip;
+  }
+  return 1;
+};
 
 // ---------- HUD elements ----------
 
@@ -69,6 +75,7 @@ const hud = {
   source: document.getElementById("source"),
   levelSelect: document.getElementById("levelSelect"),
   goalText: document.getElementById("goalText"),
+  timer: document.getElementById("timer"),
   help: document.getElementById("help"),
   phoneCard: document.getElementById("phoneCard"),
   qr: document.getElementById("qr"),
@@ -129,7 +136,7 @@ function handleKeyPress(code) {
   if (code === "KeyF") {
     car.fansOn = !car.fansOn;
   } else if (code === "KeyR") {
-    car.reset();
+    restartScenario();
   } else if (code === "KeyC") {
     cameraModeIndex = (cameraModeIndex + 1) % CAMERA_MODES.length;
     showMessage("Camera: " + CAMERA_MODES[cameraModeIndex], 1.2);
@@ -220,7 +227,7 @@ function handleSocketMessage(msg) {
       phone.lastFans = input.fans;
     }
     if (input.reset && !phone.lastReset) {
-      car.reset();
+      restartScenario();
     }
     phone.lastReset = input.reset;
     phone.input = input;
@@ -365,8 +372,9 @@ async function loadLevel(index) {
     removeLevel(level);
   }
   level = buildLevel(data, scene, world, RAPIER);
-  car.reset(data.spawn);
+  car.reset(level.spawn);
   snapCamera = true;
+  hud.timer.textContent = "";
   hud.levelSelect.value = String(index);
   if (data.goal && data.goal.text) {
     hud.goalText.textContent = data.goal.text;
@@ -374,6 +382,15 @@ async function loadLevel(index) {
     hud.goalText.textContent = data.description || "";
   }
   showMessage(data.name, 1.8);
+}
+
+// Put the car back at the start, and restart the level's traffic, rival and timers.
+function restartScenario() {
+  car.reset();
+  if (level) {
+    resetLevel(level);
+  }
+  snapCamera = true;
 }
 
 hud.levelSelect.addEventListener("change", function () {
@@ -550,6 +567,9 @@ function frame(now) {
   let steps = 0;
   while (accumulator >= step && steps < CONFIG.physics.maxStepsPerFrame) {
     car.step(input, step);
+    if (level) {
+      stepLevel(level, step, car);
+    }
     world.step();
     car.afterStep(step);
     accumulator = accumulator - step;
@@ -561,17 +581,27 @@ function frame(now) {
   car.updateVisuals(accumulator / step, dt, elapsed);
 
   if (level) {
-    const reached = updateLevel(level, car.getPosition(), car.airborne, dt);
-    if (reached) {
-      showMessage("Goal reached!", 3);
+    const forward = car.getForward();
+    const status = updateLevel(level, {
+      position: car.getPosition(),
+      airborne: car.airborne,
+      speedKmh: car.speedKmh,
+      heading: Math.atan2(forward.x, forward.z),
+    }, dt);
+    if (status.reached) {
+      showMessage(status.message, 3);
       pendingEvents.push("goal_reached");
     }
+    if (status.failed) {
+      showMessage(status.message, 4);
+      pendingEvents.push("goal_failed");
+    }
+    hud.timer.textContent = status.line;
   }
 
   // Fell off the edge of the world.
   if (car.getPosition().y < -30) {
-    car.reset();
-    snapCamera = true;
+    restartScenario();
   }
 
   handleCarEvents();
@@ -648,4 +678,4 @@ requestAnimationFrame(frame);
 
 // Handy for poking at things from the browser console, e.g. game.car.tank = 100
 // game.frame(time) runs one frame by hand, for testing when the tab is in the background.
-window.game = { car: car, world: world, camera: camera, scene: scene, CONFIG: CONFIG, frame: frame, keys: keys };
+window.game = { car: car, world: world, camera: camera, scene: scene, CONFIG: CONFIG, frame: frame, keys: keys, getLevel: function () { return level; } };

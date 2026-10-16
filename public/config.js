@@ -93,6 +93,10 @@ export const CONFIG = {
     touchdownSpeed: 3, // the burn aims to touch down at about this speed (m/s)
   },
 
+  surfaces: {
+    grassGrip: 0.55, // grip multiplier off the track on grass (fans still help)
+  },
+
   air: {
     // Help the car land the right way up.
     landingAssistHeight: 4.0, // start leveling the car when this close to the ground

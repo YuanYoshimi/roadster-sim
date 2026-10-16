@@ -1,13 +1,24 @@
 // levels.js — Owner: B (friend)
-// Loads level JSON files from /levels and builds them: ground, props, parked cars, and the goal.
+// Loads level JSON files from /levels and builds them: ground, props, cars, and the goal.
 // Never hard-code the world. Every map is a JSON file in levels/ (see levels/blank.json).
 //
 // Positions are in meters. heading is in degrees: 0 faces +Z, 90 faces +X.
+// Ground types: flat (asphalt grid), grass (green, less grip).
 // Prop types: box, wall, ramp, curl (curves up and over, upside down), cone, checkpoint,
-// parking_spot, paint (flat color, no collision).
-// Car kinds: compact, sedan, suv, pickup, van, semi. Behaviors so far: parked.
+//   parking_spot, paint (flat color, no collision), grandstand,
+//   and the big generators in scenery.js: track, parking_lot, highway.
+// Car kinds: compact, sedan, suv, pickup, van, semi.
+// Car behaviors: parked, stopped, path (with "path": [[x, z], ...], "loop"), rival.
+// Goal types:
+//   reach - get to the green zone (add "timeLimit": seconds for a countdown)
+//   lap   - drive a lap of the track through every checkpoint (needs a track prop)
+//   park  - park in the open spot of a parking_lot before the rival does
 
 import * as THREE from "three";
+import { addMesh, headingToQuaternion, addFixedBoxCollider, BoxBatch } from "./level-utils.js";
+import { makeCarMesh, getCarSize, CAR_COLORS } from "./vehicles.js";
+import { addMover, stepMovers, syncMoverMeshes, resetMovers } from "./traffic.js";
+import { buildTrack, buildParkingLot, buildHighway, placeArch } from "./scenery.js";
 
 export async function fetchLevelList() {
   const response = await fetch("/levels/index.json");
@@ -23,7 +34,8 @@ export async function fetchLevel(file) {
 }
 
 // Build a level into the scene and the physics world.
-// Returns an object you pass to updateLevel() every frame and removeLevel() when done.
+// Returns an object you pass to stepLevel() each physics step, updateLevel() each frame,
+// resetLevel() when the player restarts, and removeLevel() when done.
 export function buildLevel(level, scene, world, RAPIER) {
   const built = {
     level: level,
@@ -33,8 +45,13 @@ export function buildLevel(level, scene, world, RAPIER) {
     meshes: [], // everything we added to the scene
     fixedColliders: [], // colliders that don't move
     movingProps: [], // { mesh, body } pairs, like cones you can knock over
+    movers: [], // cars and people that drive or walk by themselves (traffic.js)
+    events: [], // things that happened, like "rival_parked"
     goal: null,
-    goalReached: false,
+    goalState: null,
+    groundCollider: null,
+    grassGround: false,
+    spawn: level.spawn,
     time: 0,
   };
 
@@ -47,12 +64,18 @@ export function buildLevel(level, scene, world, RAPIER) {
 
   const cars = level.cars || [];
   for (let i = 0; i < cars.length; i++) {
-    buildParkedCar(built, cars[i], i);
+    buildCar(built, cars[i], i);
+  }
+
+  // A track can choose the spawn point for us (just before its start line).
+  if (level.spawn && level.spawn.onTrack && built.trackSpawn) {
+    built.spawn = built.trackSpawn;
   }
 
   if (level.goal) {
     buildGoal(built, level.goal);
   }
+  resetGoal(built);
 
   // TODO (Milestone 5): if level.model is set, load the .glb with GLTFLoader and
   // make a trimesh collider from it (for PLATEAU Tokyo chunks, race tracks, etc.).
@@ -60,31 +83,53 @@ export function buildLevel(level, scene, world, RAPIER) {
   return built;
 }
 
-// Call every frame. Returns true once, on the frame the car reaches the goal.
-export function updateLevel(built, carPosition, carAirborne, dt) {
+// Call once per physics step, BEFORE world.step(). Moves traffic and other movers.
+export function stepLevel(built, dt, car) {
+  if (built.movers.length > 0) {
+    stepMovers(built, dt, { position: car.getPosition() });
+  }
+}
+
+// Call every frame. car = { position, airborne, speedKmh, heading (radians) }.
+// Returns { reached, failed, message, line }: reached/failed are true only on the frame it happens,
+// message is a big on-screen message for that moment, line is the goal's live status for the HUD.
+export function updateLevel(built, car, dt) {
   built.time = built.time + dt;
 
-  // Cones and other loose things: copy their physics pose onto their mesh.
+  // Cones, carts and other loose things: copy their physics pose onto their mesh.
   for (const item of built.movingProps) {
     const p = item.body.translation();
     const r = item.body.rotation();
     item.mesh.position.set(p.x, p.y, p.z);
     item.mesh.quaternion.set(r.x, r.y, r.z, r.w);
   }
+  syncMoverMeshes(built);
 
-  if (!built.goal) {
-    return false;
+  const status = { reached: false, failed: false, message: "", line: "" };
+  const goal = built.goal;
+  const state = built.goalState;
+  if (!goal || state.done || state.failed) {
+    if (state && state.finalLine) {
+      status.line = state.finalLine;
+    }
+    return status;
   }
-  // Gentle pulse so the goal is easy to spot.
-  built.goal.ring.material.opacity = 0.25 + 0.15 * Math.sin(built.time * 3);
-  const dx = carPosition.x - built.goal.x;
-  const dz = carPosition.z - built.goal.z;
-  const inside = Math.sqrt(dx * dx + dz * dz) < built.goal.radius;
-  if (inside && !carAirborne && !built.goalReached) {
-    built.goalReached = true;
-    return true;
+
+  if (goal.type === "lap") {
+    updateLapGoal(built, car, status);
+  } else if (goal.type === "park") {
+    updateParkGoal(built, car, dt, status);
+  } else {
+    updateReachGoal(built, car, status);
   }
-  return false;
+  built.events = [];
+  return status;
+}
+
+// Put the scenario back to the start: traffic, rival, timers.
+export function resetLevel(built) {
+  resetMovers(built);
+  resetGoal(built);
 }
 
 export function removeLevel(built) {
@@ -97,16 +142,203 @@ export function removeLevel(built) {
   for (const item of built.movingProps) {
     built.world.removeRigidBody(item.body);
   }
+  for (const mover of built.movers) {
+    built.world.removeRigidBody(mover.body);
+  }
   built.meshes = [];
   built.fixedColliders = [];
   built.movingProps = [];
+  built.movers = [];
+}
+
+// Is this collider the grass ground? (The car uses this to lose grip off the track.)
+export function isGrass(built, collider) {
+  return built.grassGround && built.groundCollider !== null && collider.handle === built.groundCollider.handle;
+}
+
+// ---------- Goals ----------
+
+function resetGoal(built) {
+  built.goalState = {
+    done: false,
+    failed: false,
+    finalLine: "",
+    timerStart: null,
+    // lap goal
+    lapStarted: false,
+    nextCheckpoint: 0,
+    lapStart: 0,
+    bestLap: built.goalState ? built.goalState.bestLap : null,
+    // park goal
+    parkedFor: 0,
+  };
+  built.events = [];
+  if (built.track) {
+    placeArch(built, 0);
+  }
+}
+
+// reach: drive into the green zone (optionally before time runs out).
+function updateReachGoal(built, car, status) {
+  const goal = built.goal;
+  const state = built.goalState;
+  goal.ring.material.opacity = 0.25 + 0.15 * Math.sin(built.time * 3);
+
+  // The clock starts when the car starts moving.
+  if (goal.timeLimit && state.timerStart === null && car.speedKmh > 3) {
+    state.timerStart = built.time;
+  }
+  let elapsed = 0;
+  if (state.timerStart !== null) {
+    elapsed = built.time - state.timerStart;
+  }
+  if (goal.timeLimit) {
+    status.line = "Time left " + formatTime(Math.max(0, goal.timeLimit - elapsed));
+  }
+
+  const dx = car.position.x - goal.x;
+  const dz = car.position.z - goal.z;
+  const inside = Math.sqrt(dx * dx + dz * dz) < goal.radius;
+  if (inside && !car.airborne) {
+    state.done = true;
+    status.reached = true;
+    status.message = "Goal reached!";
+    if (goal.timeLimit) {
+      status.message = "Made it in " + formatTime(elapsed) + "!";
+      state.finalLine = "Made it in " + formatTime(elapsed);
+    }
+  } else if (goal.timeLimit && elapsed > goal.timeLimit) {
+    state.failed = true;
+    status.failed = true;
+    status.message = "Out of time! Press R to try again.";
+    state.finalLine = "Out of time";
+  }
+}
+
+// lap: pass every checkpoint in order and come back to the start line.
+function updateLapGoal(built, car, status) {
+  const state = built.goalState;
+  const track = built.track;
+  const checkpoints = track.checkpoints;
+  const next = checkpoints[state.nextCheckpoint];
+  const dx = car.position.x - next.position.x;
+  const dz = car.position.z - next.position.z;
+  const dy = Math.abs(car.position.y - next.position.y);
+  // Close enough sideways, and on the same level (the bridge passes over the track).
+  const passed = Math.sqrt(dx * dx + dz * dz) < track.width / 2 + 4 && dy < 4;
+
+  if (passed) {
+    if (state.nextCheckpoint === 0) {
+      if (state.lapStarted) {
+        const lapTime = built.time - state.lapStart;
+        let best = "";
+        if (state.bestLap === null || lapTime < state.bestLap) {
+          state.bestLap = lapTime;
+          best = " (best!)";
+        }
+        status.reached = true;
+        status.message = "Lap " + formatTime(lapTime) + best;
+      }
+      state.lapStarted = true;
+      state.lapStart = built.time;
+    }
+    state.nextCheckpoint = (state.nextCheckpoint + 1) % checkpoints.length;
+    placeArch(built, state.nextCheckpoint);
+  }
+
+  if (!state.lapStarted) {
+    status.line = "Cross the start line to begin";
+  } else {
+    let checkpointNumber = state.nextCheckpoint;
+    if (checkpointNumber === 0) {
+      checkpointNumber = checkpoints.length;
+    }
+    status.line = "Lap " + formatTime(built.time - state.lapStart) + "  ·  gate " + checkpointNumber + "/" + checkpoints.length;
+  }
+  if (state.bestLap !== null) {
+    status.line = status.line + "  ·  best " + formatTime(state.bestLap);
+  }
+}
+
+// park: stop inside the open spot, lined up, before the rival gets there.
+function updateParkGoal(built, car, dt, status) {
+  const state = built.goalState;
+  const spot = built.parkingSpot;
+  spot.arrow.position.y = 4 + Math.sin(built.time * 3) * 0.4;
+  spot.arrow.rotation.y = built.time;
+  if (state.timerStart === null) {
+    state.timerStart = built.time;
+  }
+
+  if (built.events.includes("rival_parked")) {
+    state.failed = true;
+    status.failed = true;
+    status.message = "Someone took your spot! Press R to try again.";
+    state.finalLine = "Spot taken";
+    return;
+  }
+
+  // Where is the car, measured along the spot and across it?
+  const dx = car.position.x - spot.x;
+  const dz = car.position.z - spot.z;
+  const along = dx * Math.sin(spot.heading) + dz * Math.cos(spot.heading);
+  const across = dx * Math.cos(spot.heading) - dz * Math.sin(spot.heading);
+  // Nose in or nose out are both fine.
+  let angle = Math.abs(wrapAngle(car.heading - spot.heading));
+  angle = Math.min(angle, Math.PI - angle);
+  const lined = Math.abs(across) < 0.8 && Math.abs(along) < 1.2 && angle < THREE.MathUtils.degToRad(25);
+  if (lined && car.speedKmh < 3 && !car.airborne) {
+    state.parkedFor = state.parkedFor + dt;
+  } else {
+    state.parkedFor = 0;
+  }
+  if (state.parkedFor > 1.0) {
+    state.done = true;
+    status.reached = true;
+    const time = formatTime(built.time - state.timerStart);
+    status.message = "Parked! " + time;
+    state.finalLine = "Parked in " + time;
+    return;
+  }
+
+  // Show how close the rival is to taking the spot.
+  status.line = "Find the open spot (green arrow)";
+  for (const mover of built.movers) {
+    if (mover.behavior === "rival") {
+      const rx = mover.position.x - spot.x;
+      const rz = mover.position.z - spot.z;
+      status.line = "Other driver is " + Math.round(Math.sqrt(rx * rx + rz * rz)) + " m from your spot";
+    }
+  }
+}
+
+function formatTime(seconds) {
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds - minutes * 60;
+  let text = rest.toFixed(1);
+  if (rest < 10) {
+    text = "0" + text;
+  }
+  return minutes + ":" + text;
+}
+
+function wrapAngle(angle) {
+  let result = angle;
+  while (result > Math.PI) {
+    result = result - Math.PI * 2;
+  }
+  while (result < -Math.PI) {
+    result = result + Math.PI * 2;
+  }
+  return result;
 }
 
 // ---------- Builders ----------
 
 function buildGround(built, ground) {
   const size = ground.size || 1000;
-  const texture = makeGridTexture();
+  built.grassGround = ground.type === "grass";
+  const texture = makeGridTexture(built.grassGround);
   texture.repeat.set(size / 10, size / 10); // one texture tile = 10 m
   const mesh = new THREE.Mesh(
     new THREE.PlaneGeometry(size, size),
@@ -118,7 +350,8 @@ function buildGround(built, ground) {
 
   // A thick slab, so fast cars can't tunnel through a thin floor.
   const collider = built.RAPIER.ColliderDesc.cuboid(size / 2, 0.5, size / 2).setTranslation(0, -0.5, 0).setFriction(1.0);
-  built.fixedColliders.push(built.world.createCollider(collider));
+  built.groundCollider = built.world.createCollider(collider);
+  built.fixedColliders.push(built.groundCollider);
 }
 
 function buildProp(built, prop) {
@@ -141,6 +374,14 @@ function buildProp(built, prop) {
     buildCheckpoint(built, prop);
   } else if (prop.type === "parking_spot") {
     buildParkingSpot(built, prop);
+  } else if (prop.type === "grandstand") {
+    buildGrandstand(built, prop);
+  } else if (prop.type === "track") {
+    buildTrack(built, prop);
+  } else if (prop.type === "parking_lot") {
+    buildParkingLot(built, prop);
+  } else if (prop.type === "highway") {
+    buildHighway(built, prop);
   } else if (prop.type === "paint") {
     const mesh = new THREE.Mesh(
       new THREE.PlaneGeometry(prop.w || 10, prop.d || 10),
@@ -154,6 +395,27 @@ function buildProp(built, prop) {
   } else {
     console.warn("Unknown prop type, skipping:", prop.type);
   }
+}
+
+// Stepped seating with a roof, for the side of a race track. Runs along its heading.
+function buildGrandstand(built, prop) {
+  const length = prop.length || 80;
+  const rotation = headingToQuaternion(prop.heading || 0);
+  const batch = new BoxBatch();
+  for (let step = 0; step < 5; step++) {
+    batch.add(step * 2.2, 0.6 + step * 1.2, 0, 2.2, 1.2 + step * 2.4, length, 0, step % 2 === 0 ? "#8a929c" : "#7a828c");
+  }
+  batch.add(5.5, 9.5, 0, 13, 0.4, length, 0, "#e4e6e9"); // roof
+  for (let z = -length / 2; z <= length / 2; z = z + 20) {
+    batch.add(11, 5, z, 0.4, 9.5, 0.4, 0, "#9da3ab");
+  }
+  const mesh = batch.build();
+  mesh.position.set(prop.x, 0, prop.z);
+  mesh.quaternion.copy(rotation);
+  addMesh(built, mesh);
+  // One solid box for the whole thing.
+  const offset = new THREE.Vector3(5.5, 0, 0).applyQuaternion(rotation);
+  addFixedBoxCollider(built, prop.x + offset.x, 6, prop.z + offset.z, 13, 12, length, prop.heading || 0);
 }
 
 // A wedge that rises toward its heading direction. (x, z) is the middle of its footprint.
@@ -346,76 +608,42 @@ function buildParkingSpot(built, prop) {
   addMesh(built, group);
 }
 
-// Simple box-shaped vehicles for jumping over or getting in the way.
-const CAR_SIZES = {
-  compact: { length: 3.6, width: 1.8, height: 1.4 }, // small two-seat robotaxi
-  sedan: { length: 4.8, width: 1.85, height: 1.45 },
-  suv: { length: 4.9, width: 2.0, height: 1.8 },
-  pickup: { length: 5.8, width: 2.05, height: 1.9 },
-  van: { length: 5.2, width: 2.0, height: 2.2 },
-  semi: { length: 16, width: 2.6, height: 4.0 },
-};
-const CAR_COLORS = ["#c0392b", "#2c3e50", "#7f8c8d", "#1f6fb2", "#d4ac0d", "#ecf0f1", "#16a085", "#5b2c6f"];
-
-function buildParkedCar(built, car, index) {
-  let size = CAR_SIZES[car.kind];
-  if (!size) {
-    size = CAR_SIZES.sedan;
+// A car from the level's "cars" list. Parked cars are solid and never move;
+// any other behavior becomes a mover (see traffic.js).
+function buildCar(built, car, index) {
+  let color = car.color;
+  if (!color) {
+    color = CAR_COLORS[index % CAR_COLORS.length];
   }
-  const rotation = headingToQuaternion(car.heading || 0);
-  const color = car.color || CAR_COLORS[index % CAR_COLORS.length];
-
-  const collider = built.RAPIER.ColliderDesc.cuboid(size.width / 2, size.height / 2, size.length / 2)
-    .setTranslation(car.x, size.height / 2, car.z)
-    .setRotation(rotation);
-  built.fixedColliders.push(built.world.createCollider(collider));
-
-  const group = new THREE.Group();
-  const paint = new THREE.MeshStandardMaterial({ color: color, roughness: 0.45, metalness: 0.3 });
-  const glass = new THREE.MeshStandardMaterial({ color: "#14181e", roughness: 0.2, metalness: 0.6 });
-  const clearance = 0.3;
-
-  if (car.kind === "semi") {
-    // Cab at the front, a long box trailer behind it.
-    addPart(group, size.width, 2.6, 3.0, 0, clearance + 1.3, size.length / 2 - 1.5, paint);
-    addPart(group, size.width * 0.9, 0.8, 0.1, 0, clearance + 2.1, size.length / 2 + 0.01, glass);
-    addPart(group, size.width, size.height - 0.5, size.length - 3.4, 0, 0.5 + (size.height - 0.5) / 2, -1.7, new THREE.MeshStandardMaterial({ color: "#d9d9d9", roughness: 0.6 }));
-  } else if (car.kind === "pickup") {
-    const lowerHeight = size.height * 0.5;
-    addPart(group, size.width, lowerHeight, size.length, 0, clearance + lowerHeight / 2, 0, paint);
-    addPart(group, size.width * 0.92, size.height - lowerHeight - clearance, size.length * 0.38, 0, clearance + lowerHeight + (size.height - lowerHeight - clearance) / 2, size.length * 0.1, glass);
-  } else {
-    const lowerHeight = size.height * 0.45;
-    const cabinHeight = size.height - lowerHeight - clearance;
-    addPart(group, size.width, lowerHeight, size.length, 0, clearance + lowerHeight / 2, 0, paint);
-    let cabinLength = size.length * 0.5;
-    if (car.kind === "van" || car.kind === "suv") {
-      cabinLength = size.length * 0.75;
-    }
-    addPart(group, size.width * 0.92, cabinHeight, cabinLength, 0, clearance + lowerHeight + cabinHeight / 2, -size.length * 0.05, glass);
+  const behavior = car.behavior || "parked";
+  if (behavior !== "parked") {
+    addMover(built, {
+      behavior: behavior,
+      kind: car.kind,
+      color: color,
+      x: car.x,
+      z: car.z,
+      heading: car.heading || 0,
+      speedKmh: car.speedKmh || 20,
+      path: car.path,
+      loop: car.loop,
+    });
+    return;
   }
-
-  // Four wheels (a real semi has more, but the trailer hides them).
-  const wheelRadius = 0.38;
-  const wheelGeometry = new THREE.CylinderGeometry(wheelRadius, wheelRadius, 0.3, 16);
-  wheelGeometry.rotateZ(Math.PI / 2);
-  const rubber = new THREE.MeshStandardMaterial({ color: "#151515", roughness: 0.9 });
-  const axleZ = size.length / 2 - 1.0;
-  for (const sideX of [-1, 1]) {
-    for (const sideZ of [-1, 1]) {
-      const wheel = new THREE.Mesh(wheelGeometry, rubber);
-      wheel.position.set(sideX * (size.width / 2 - 0.1), wheelRadius, sideZ * axleZ);
-      wheel.castShadow = true;
-      group.add(wheel);
-    }
-  }
-
-  group.position.set(car.x, 0, car.z);
-  group.quaternion.copy(rotation);
-  addMesh(built, group);
+  const size = getCarSize(car.kind);
+  addFixedBoxCollider(built, car.x, size.height / 2, car.z, size.width, size.height, size.length, car.heading || 0);
+  const mesh = makeCarMesh(car.kind || "sedan", color);
+  mesh.position.set(car.x, 0, car.z);
+  mesh.quaternion.copy(headingToQuaternion(car.heading || 0));
+  addMesh(built, mesh);
 }
 
 function buildGoal(built, goal) {
+  const type = goal.type || "reach";
+  built.goal = { type: type, text: goal.text || "", timeLimit: goal.timeLimit || 0 };
+  if (type !== "reach") {
+    return; // lap and park goals use the track's arch and the parking lot's arrow
+  }
   const radius = goal.radius || 6;
   const ring = new THREE.Mesh(
     new THREE.CylinderGeometry(radius, radius, 3, 48, 1, true),
@@ -428,9 +656,12 @@ function buildGoal(built, goal) {
     new THREE.MeshBasicMaterial({ color: "#39ff88", transparent: true, opacity: 0.35, depthWrite: false })
   );
   pad.rotation.x = -Math.PI / 2;
-  pad.position.set(goal.x, 0.03, goal.z);
+  pad.position.set(goal.x, 0.06, goal.z);
   addMesh(built, pad);
-  built.goal = { x: goal.x, z: goal.z, radius: radius, text: goal.text || "", ring: ring };
+  built.goal.x = goal.x;
+  built.goal.z = goal.z;
+  built.goal.radius = radius;
+  built.goal.ring = ring;
 }
 
 // ---------- Small helpers ----------
@@ -447,45 +678,35 @@ function addSolidBox(built, x, y, z, w, h, d, heading, color) {
   addMesh(built, mesh);
 }
 
-function addPart(group, w, h, d, x, y, z, material) {
-  const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
-  mesh.position.set(x, y, z);
-  mesh.castShadow = true;
-  mesh.receiveShadow = true;
-  group.add(mesh);
-}
-
-function addMesh(built, mesh) {
-  built.scene.add(mesh);
-  built.meshes.push(mesh);
-}
-
-function headingToQuaternion(headingDeg) {
-  return new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), THREE.MathUtils.degToRad(headingDeg));
-}
-
-// Asphalt-gray tile with a light line every 5 m and a brighter one every 10 m.
-let gridTexture = null;
-function makeGridTexture() {
-  if (gridTexture) {
-    return gridTexture.clone();
+// A ground tile with a light line every 5 m and a brighter one every 10 m.
+// Asphalt gray normally, green for grass.
+const gridTextures = {};
+function makeGridTexture(grass) {
+  let key = "asphalt";
+  let colors = ["#3b4048", "#4a5059", "#636a75"];
+  if (grass) {
+    key = "grass";
+    colors = ["#3d6b35", "#447a3b", "#4f8745"];
   }
-  const canvas = document.createElement("canvas");
-  canvas.width = 256;
-  canvas.height = 256;
-  const ctx = canvas.getContext("2d");
-  ctx.fillStyle = "#3b4048";
-  ctx.fillRect(0, 0, 256, 256);
-  ctx.fillStyle = "#4a5059";
-  ctx.fillRect(127, 0, 2, 256);
-  ctx.fillRect(0, 127, 256, 2);
-  ctx.fillStyle = "#636a75";
-  ctx.fillRect(0, 0, 3, 256);
-  ctx.fillRect(0, 0, 256, 3);
-  gridTexture = new THREE.CanvasTexture(canvas);
-  gridTexture.wrapS = THREE.RepeatWrapping;
-  gridTexture.wrapT = THREE.RepeatWrapping;
-  gridTexture.colorSpace = THREE.SRGBColorSpace;
-  gridTexture.anisotropy = 8;
-  return gridTexture.clone();
+  if (!gridTextures[key]) {
+    const canvas = document.createElement("canvas");
+    canvas.width = 256;
+    canvas.height = 256;
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = colors[0];
+    ctx.fillRect(0, 0, 256, 256);
+    ctx.fillStyle = colors[1];
+    ctx.fillRect(127, 0, 2, 256);
+    ctx.fillRect(0, 127, 256, 2);
+    ctx.fillStyle = colors[2];
+    ctx.fillRect(0, 0, 3, 256);
+    ctx.fillRect(0, 0, 256, 3);
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.anisotropy = 8;
+    gridTextures[key] = texture;
+  }
+  return gridTextures[key].clone();
 }
