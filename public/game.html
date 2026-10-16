@@ -1,0 +1,153 @@
+<!doctype html>
+<!-- game.html — Owner: B (friend). The laptop screen: 3D scene plus the HUD on top. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Roadster Sim</title>
+  <!-- Tells the browser where "three" and the physics library live (served from node_modules). -->
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "/vendor/three/build/three.module.js",
+        "@dimforge/rapier3d-compat": "/vendor/rapier/rapier.mjs"
+      }
+    }
+  </script>
+  <style>
+    :root {
+      --panel: rgba(12, 15, 20, 0.72);
+      --panel-border: rgba(255, 255, 255, 0.08);
+      --text: #f2f4f7;
+      --muted: #9aa3b0;
+      --fans: #34d3ff;
+      --thrust: #ff9a3c;
+      --danger: #ff4d4d;
+      --ok: #3ee08f;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      height: 100%;
+      overflow: hidden;
+      background: #0b0d10;
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", sans-serif;
+    }
+    canvas#scene { display: block; width: 100vw; height: 100vh; }
+    .panel {
+      position: absolute;
+      background: var(--panel);
+      border: 1px solid var(--panel-border);
+      border-radius: 14px;
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+    }
+
+    /* Speed, fans, tank, altitude */
+    #dash { top: 16px; left: 16px; padding: 14px 18px; min-width: 250px; }
+    #speed { font-size: 52px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+    #speed small { font-size: 16px; font-weight: 500; color: var(--muted); margin-left: 4px; }
+    .row { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; font-size: 14px; gap: 12px; }
+    .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
+    #fans { font-weight: 700; color: var(--muted); }
+    #fans.on { color: var(--fans); text-shadow: 0 0 12px rgba(52, 211, 255, 0.7); }
+    #tankBar { flex: 1; height: 10px; background: rgba(255,255,255,0.1); border-radius: 5px; overflow: hidden; }
+    #tankFill { height: 100%; width: 100%; background: var(--thrust); border-radius: 5px; }
+    #tankBar.empty { animation: flash 0.25s steps(2) infinite; }
+    #tankBar.off { opacity: 0.3; }
+    @keyframes flash { 0% { background: rgba(255, 77, 77, 0.9); } 100% { background: rgba(255,255,255,0.1); } }
+    #altitude { font-variant-numeric: tabular-nums; }
+    #modes { display: flex; gap: 6px; margin-top: 12px; }
+    #modes button {
+      flex: 1; padding: 6px 4px; border-radius: 8px; border: 1px solid var(--panel-border);
+      background: rgba(255,255,255,0.06); color: var(--muted); font-size: 11px; font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.05em; cursor: pointer;
+    }
+    #modes button.active { background: var(--text); color: #0b0d10; }
+    #source { font-size: 12px; color: var(--muted); margin-top: 10px; }
+
+    /* Level select and help */
+    #topRight { top: 16px; right: 16px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; min-width: 220px; }
+    #topRight select {
+      width: 100%; padding: 6px 8px; border-radius: 8px; background: rgba(255,255,255,0.08);
+      color: var(--text); border: 1px solid var(--panel-border); font-size: 14px;
+    }
+    #goalText { font-size: 13px; color: var(--text); max-width: 260px; }
+    #help { font-size: 12px; color: var(--muted); line-height: 1.6; }
+    #help b { color: var(--text); font-weight: 600; }
+    #help.hidden { display: none; }
+
+    /* Phone QR card */
+    #phoneCard { left: 16px; bottom: 16px; padding: 12px; display: flex; gap: 12px; align-items: center; max-width: 380px; }
+    #qr { width: 132px; height: 132px; background: white; border-radius: 8px; padding: 4px; }
+    #phoneCard.connected #qr { width: 64px; height: 64px; }
+    #phoneTitle { font-weight: 700; font-size: 15px; }
+    #phoneUrl { font-size: 11px; color: var(--muted); word-break: break-all; margin-top: 4px; }
+    #phoneStatus { font-size: 13px; margin-top: 8px; color: var(--muted); }
+    #phoneStatus.ok { color: var(--ok); }
+
+    /* Big messages in the middle-bottom */
+    #message {
+      position: absolute; left: 50%; bottom: 90px; transform: translateX(-50%);
+      font-size: 28px; font-weight: 700; padding: 10px 22px; border-radius: 12px;
+      background: var(--panel); opacity: 0; transition: opacity 0.25s; pointer-events: none; text-align: center;
+    }
+    #message.show { opacity: 1; }
+
+    /* Coach subtitle bar (AI coach comes later) */
+    #tip {
+      position: absolute; left: 50%; bottom: 24px; transform: translateX(-50%);
+      font-size: 18px; padding: 8px 18px; border-radius: 10px; background: var(--panel); display: none;
+    }
+
+    #loading {
+      position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+      font-size: 20px; color: var(--muted); background: #0b0d10;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="scene"></canvas>
+
+  <div id="dash" class="panel">
+    <div id="speed">0<small>km/h</small></div>
+    <div class="row"><span class="label">Fans</span><span id="fans">OFF</span></div>
+    <div class="row"><span class="label">Air tank</span><div id="tankBar"><div id="tankFill"></div></div></div>
+    <div class="row"><span class="label">Altitude</span><span id="altitude">0.0 m</span></div>
+    <div id="modes">
+      <button data-mode="performance">Perf</button>
+      <button data-mode="thrust">Thrust</button>
+      <button data-mode="rocket">Rocket</button>
+    </div>
+    <div id="source">Controls: keyboard</div>
+  </div>
+
+  <div id="topRight" class="panel">
+    <select id="levelSelect"></select>
+    <div id="goalText"></div>
+    <div id="help">
+      <b>W/S</b> gas / brake &middot; <b>A/D</b> steer<br>
+      <b>F</b> fans &middot; <b>Space</b> thrust<br>
+      <b>1/2/3</b> mode &middot; <b>&uarr;/&darr;</b> tilt (Rocket)<br>
+      <b>R</b> reset &middot; <b>C</b> camera &middot; <b>L</b> next level<br>
+      <b>H</b> hide this
+    </div>
+  </div>
+
+  <div id="phoneCard" class="panel">
+    <img id="qr" alt="QR code for the phone controller">
+    <div>
+      <div id="phoneTitle">Drive with your phone</div>
+      <div id="phoneUrl"></div>
+      <div id="phoneStatus">Waiting for phone...</div>
+    </div>
+  </div>
+
+  <div id="message"></div>
+  <div id="tip"></div>
+  <div id="loading">Loading the Roadster...</div>
+
+  <script type="module" src="/game.js"></script>
+</body>
+</html>

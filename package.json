@@ -1,0 +1,21 @@
+{
+  "name": "roadster-sim",
+  "version": "0.1.0",
+  "description": "Browser driving sim of a fan-downforce, thruster-equipped roadster, steered with your phone.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "phone": "node server.js --tunnel"
+  },
+  "engines": {
+    "node": ">=20.12"
+  },
+  "dependencies": {
+    "@dimforge/rapier3d-compat": "^0.21.0",
+    "express": "^5.3.0",
+    "qrcode": "^1.5.4",
+    "three": "^0.186.1",
+    "ws": "^8.22.0"
+  }
+}
