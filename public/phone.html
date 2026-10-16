@@ -49,6 +49,7 @@
       padding: 10px max(10px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
     }
     .side { display: grid; grid-template-rows: 1fr 1.6fr; gap: 10px; }
+    .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     .center { display: flex; flex-direction: column; align-items: center; justify-content: space-between; min-width: 0; }
 
     .btn {
@@ -68,18 +69,30 @@
     #gas.pressed { background: var(--gas); color: #062814; }
     #brake { color: var(--brake); }
     #brake.pressed { background: var(--brake); color: #2b0509; }
-    #thrust { color: var(--thrust); }
+    #thrust { color: var(--thrust); font-size: 4.2vh; }
     #thrust.pressed { background: var(--thrust); color: #2e1500; }
-    #thrust.empty { color: var(--muted); opacity: 0.5; }
-    #fans { color: var(--muted); }
+    #lift { color: var(--thrust); font-size: 4.2vh; }
+    #lift.pressed { background: var(--thrust); color: #2e1500; }
+    #roll { color: var(--thrust); font-size: 4.2vh; }
+    #roll.pressed { background: var(--thrust); color: #2e1500; }
+    /* Buttons this trim doesn't have, or an empty air tank. */
+    .btn.off { color: var(--muted); opacity: 0.35; }
+    #fans { color: var(--muted); font-size: 4.2vh; }
     #fans.on { background: rgba(52, 211, 255, 0.18); color: var(--fans); box-shadow: inset 0 0 0 2px var(--fans), 0 0 24px rgba(52,211,255,0.35); }
 
     #status { font-size: 3.6vh; color: var(--muted); display: flex; align-items: center; gap: 8px; }
     #dot { width: 2.4vh; height: 2.4vh; border-radius: 50%; background: var(--brake); }
     #dot.ok { background: var(--gas); }
 
-    #wheel { width: 38vh; height: 38vh; }
+    #yokeArea { flex: 1; width: 100%; display: flex; align-items: center; justify-content: center; min-height: 0; }
+    #wheel { height: 100%; max-height: 40vh; aspect-ratio: 1; }
     #readout { font-size: 3vh; color: var(--muted); font-variant-numeric: tabular-nums; }
+    #tilt { color: var(--brake); font-weight: 700; }
+    #tilt.ok { color: var(--gas); }
+    #tiltHelp {
+      display: none; font-size: 3vh; color: var(--text); background: rgba(255, 77, 94, 0.2);
+      border: 1px solid var(--brake); border-radius: 10px; padding: 1vh 1.5vh; text-align: center; line-height: 1.3;
+    }
     #carInfo { display: flex; align-items: center; gap: 12px; font-size: 4vh; font-variant-numeric: tabular-nums; }
     #speed { font-weight: 800; font-size: 7vh; }
     #tank { width: 18vh; height: 1.6vh; border-radius: 1vh; background: rgba(255,255,255,0.1); overflow: hidden; }
@@ -113,31 +126,41 @@
 <body>
   <div id="controller">
     <div class="side">
-      <button id="fans" class="btn">FANS</button>
+      <div class="pair">
+        <button id="fans" class="btn">FANS</button>
+        <button id="lift" class="btn">LIFT</button>
+      </div>
       <button id="brake" class="btn">BRAKE</button>
     </div>
 
     <div class="center">
       <div id="status"><span id="dot"></span><span id="statusText">Connecting...</span></div>
-      <svg id="wheel" viewBox="-50 -50 100 100" aria-hidden="true">
-        <circle r="44" fill="none" stroke="#2a313b" stroke-width="9"></circle>
-        <circle r="44" fill="none" stroke="#f2f4f7" stroke-width="3"></circle>
-        <rect x="-44" y="-3" width="88" height="6" rx="3" fill="#f2f4f7"></rect>
-        <rect x="-3" y="0" width="6" height="44" rx="3" fill="#f2f4f7"></rect>
-        <circle r="11" fill="#171b21" stroke="#f2f4f7" stroke-width="3"></circle>
-        <rect x="-4" y="-52" width="8" height="12" rx="2" fill="#ff4d5e"></rect>
-      </svg>
-      <div id="readout">steer 0&deg; &middot; forward 0&deg;</div>
+      <!-- A yoke like the real car's. If tilt doesn't work, drag it left/right to steer. -->
+      <div id="yokeArea">
+        <svg id="wheel" viewBox="-50 -50 100 100" aria-hidden="true">
+          <rect x="-46" y="-26" width="13" height="46" rx="6.5" fill="#f2f4f7"></rect>
+          <rect x="33" y="-26" width="13" height="46" rx="6.5" fill="#f2f4f7"></rect>
+          <rect x="-40" y="10" width="80" height="9" rx="4.5" fill="#f2f4f7"></rect>
+          <rect x="-36" y="-3" width="72" height="6" rx="3" fill="#9aa3b0"></rect>
+          <circle cx="0" cy="2" r="12" fill="#171b21" stroke="#f2f4f7" stroke-width="3"></circle>
+          <rect x="-3" y="-14" width="6" height="8" rx="2" fill="#ff4d5e"></rect>
+        </svg>
+      </div>
+      <div id="tiltHelp">Tilt isn't reaching the page. Drag the yoke to steer.<br>To fix: reload, tap Start, then tap Allow.</div>
+      <div id="readout"><span id="tilt">tilt: waiting</span> &middot; steer 0&deg;</div>
       <div id="carInfo"><span id="speed">0</span><span>km/h</span><div id="tank"><div id="tankFill"></div></div></div>
       <div class="small-row">
-        <button id="mode" class="btn small">MODE &middot; THRUST</button>
+        <button id="mode" class="btn small">MODE &middot; ROCKET</button>
         <button id="center" class="btn small">CENTER</button>
         <button id="reset" class="btn small">RESET</button>
       </div>
     </div>
 
     <div class="side">
-      <button id="thrust" class="btn">THRUST</button>
+      <div class="pair">
+        <button id="roll" class="btn">ROLL</button>
+        <button id="thrust" class="btn">BOOST</button>
+      </div>
       <button id="gas" class="btn">GAS</button>
     </div>
   </div>
@@ -146,7 +169,7 @@
 
   <div id="startScreen" class="overlay">
     <h1>Roadster Yoke</h1>
-    <p>Hold your phone sideways like a steering wheel. Tilt to steer. Thumbs on GAS and BRAKE.</p>
+    <p>Hold your phone sideways like the yoke. Tilt it left/right to steer (flat or upright both work). Thumbs on GAS and BRAKE.</p>
     <button id="startButton">Tap to start</button>
     <p id="startError"></p>
   </div>

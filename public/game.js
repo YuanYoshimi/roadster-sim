@@ -64,6 +64,7 @@ const hud = {
   fans: document.getElementById("fans"),
   tankBar: document.getElementById("tankBar"),
   tankFill: document.getElementById("tankFill"),
+  tankLiters: document.getElementById("tankLiters"),
   altitude: document.getElementById("altitude"),
   source: document.getElementById("source"),
   levelSelect: document.getElementById("levelSelect"),
@@ -162,6 +163,15 @@ function readKeyboard() {
   if (keys.Space) {
     input.thrust = true;
   }
+  if (keys.ShiftLeft || keys.ShiftRight) {
+    input.lift = true;
+  }
+  if (keys.KeyQ) {
+    input.roll = -1;
+  }
+  if (keys.KeyE) {
+    input.roll = 1;
+  }
   // Arrow up = "push the stick forward" (lean forward), like the phone tilted forward.
   if (keys.ArrowUp) {
     input.pitch = input.pitch - 1;
@@ -254,6 +264,11 @@ function readControls() {
   input.gas = Math.max(phone.input.gas, keyboard.gas);
   input.brake = Math.max(phone.input.brake, keyboard.brake);
   input.thrust = phone.input.thrust || keyboard.thrust;
+  input.lift = phone.input.lift || keyboard.lift;
+  input.roll = phone.input.roll;
+  if (keyboard.roll !== 0) {
+    input.roll = keyboard.roll;
+  }
   input.pitch = phone.input.pitch;
   if (keyboard.pitch !== 0) {
     input.pitch = keyboard.pitch;
@@ -330,7 +345,11 @@ function setMode(mode) {
   for (const button of modeButtons) {
     button.classList.toggle("active", button.dataset.mode === mode);
   }
-  const names = { performance: "Performance: fans only", thrust: "Thrust: fans + rear thrusters", rocket: "Rocket: hold thrust to fly" };
+  const names = {
+    performance: "Performance: fans only",
+    thrust: "Thrust: fans + 4 rear thrusters (200 L air)",
+    rocket: "Rocket: all 10 thrusters (600 L air). LIFT to fly, ROLL to barrel roll",
+  };
   showMessage(names[mode], 1.6);
 }
 
@@ -371,6 +390,9 @@ const cameraOffset = new THREE.Vector3(); // camera spot, relative to the car
 const lookAheadOffset = new THREE.Vector3(); // where it looks, relative to the car
 const flatForward = new THREE.Vector3(0, 0, 1);
 const TURN_AROUND = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
+const WORLD_UP = new THREE.Vector3(0, 1, 0);
+let stuntBlend = 0; // 0 = normal chase camera, 1 = side stunt camera
+const stuntSide = new THREE.Vector3(-1, 0, 0);
 
 function updateCamera(dt) {
   const carPosition = car.model.root.position;
@@ -404,6 +426,26 @@ function updateCamera(dt) {
     const wantedOffset = flatForward.clone().multiplyScalar(-distance);
     wantedOffset.y = height;
     const wantedLookAhead = flatForward.clone().multiplyScalar(settings.chaseLookAhead);
+
+    // Stunt camera: a camera behind the car can't show a barrel roll or the upside-down curl,
+    // so while the car is upside down, rolling or high in the air, swing out to its side.
+    const stunting = car.getUp().y < 0.4 || car.rolling || (car.airborne && car.altitude > 4);
+    if (mode === "chase" && stunting && stuntBlend < 0.05) {
+      // Pick the side once and keep it, so the camera doesn't flip across when the car turns over.
+      stuntSide.crossVectors(flatForward, WORLD_UP);
+    }
+    let stuntTarget = 0;
+    if (mode === "chase" && stunting) {
+      stuntTarget = 1;
+    }
+    stuntBlend = stuntBlend + (stuntTarget - stuntBlend) * (1 - Math.exp(-3 * dt));
+    if (stuntBlend > 0.01) {
+      const stuntOffset = stuntSide.clone().multiplyScalar(settings.stuntDistance);
+      stuntOffset.y = settings.stuntHeight;
+      wantedOffset.lerp(stuntOffset, stuntBlend);
+      wantedLookAhead.multiplyScalar(1 - stuntBlend);
+    }
+
     if (snapCamera) {
       cameraOffset.copy(wantedOffset);
       lookAheadOffset.copy(wantedLookAhead);
@@ -456,6 +498,7 @@ function updateHud() {
   hud.tankFill.style.width = car.tank.toFixed(1) + "%";
   hud.tankBar.classList.toggle("empty", car.tankEmptyPressed);
   hud.tankBar.classList.toggle("off", car.mode === "performance");
+  hud.tankLiters.textContent = Math.round(car.tankLiters) + " L";
   hud.altitude.textContent = car.altitude.toFixed(1) + " m";
 }
 
@@ -468,6 +511,8 @@ function handleCarEvents() {
       showMessage("Air tank empty. Let it refill.", 1.8);
     } else if (name === "flip") {
       showMessage("Flipped! Press R (or RESET on the phone)", 3);
+    } else if (name === "barrel_roll") {
+      showMessage("Barrel roll!", 1.5);
     } else if (name === "big_jump") {
       showMessage("Big air!", 1.5);
     } else if (name === "crash") {
@@ -594,7 +639,7 @@ for (let i = 0; i < levelList.length; i++) {
   }
 }
 await loadLevel(startIndex);
-setMode("thrust");
+setMode("rocket");
 listenToKeyboard();
 connectSocket();
 refreshPhoneInfo();

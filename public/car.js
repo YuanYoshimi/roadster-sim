@@ -20,7 +20,10 @@ export class Car {
     const c = CONFIG.car;
 
     // ----- Physics body -----
-    this.body = world.createRigidBody(RAPIER.RigidBodyDesc.dynamic().setCanSleep(false).setTranslation(0, 2, 0));
+    // CCD stops a fast car from passing straight through thin things like the curl ramp.
+    this.body = world.createRigidBody(
+      RAPIER.RigidBodyDesc.dynamic().setCanSleep(false).setCcdEnabled(true).setTranslation(0, 2, 0)
+    );
     const colliderDesc = RAPIER.ColliderDesc.cuboid(c.halfWidth, c.halfHeight, c.halfLength)
       .setMassProperties(
         c.mass,
@@ -60,14 +63,25 @@ export class Car {
     }
 
     // ----- Gameplay state -----
-    this.mode = "thrust";
+    this.mode = "rocket";
     this.fansOn = false;
     this.fanPower = 0; // 0..1, follows fansOn with a short spin-up
-    this.tank = 100; // percent
+    this.tankCapacity = CONFIG.thrusters.tankLitersRocket; // liters, depends on the trim
+    this.tankLiters = this.tankCapacity;
+    this.tank = 100; // percent, for the HUD and phone
     this.refillTimer = 0;
     this.thrusting = false; // rear thrusters firing this step
-    this.lifting = false; // upward thrusters firing this step
-    this.tankEmptyPressed = false; // pressing thrust with an empty tank (HUD flashes)
+    this.lifting = false; // downward (corner) thrusters firing this step, from LIFT
+    this.landingBurn = false; // corner thrusters softening a landing by themselves
+    this.tankEmptyPressed = false; // pressing a thruster button with an empty tank (HUD flashes)
+    // Barrel roll
+    this.rolling = false;
+    this.rollDirection = 1; // +1 = roll right, -1 = roll left
+    this.rollTurned = 0; // how far we've rolled so far (radians)
+    this.rollTime = 0;
+    this.lastRollInput = 0;
+    this.hopTime = 0; // > 0 while the hop burst is showing
+    this.yawThrust = 0; // -1/0/+1, front yaw thrusters (for the effect)
     this.braking = 0;
     this.steerAngle = 0;
     this.speedKmh = 0;
@@ -113,7 +127,9 @@ export class Car {
     this.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
     this.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
     this.body.resetForces(true);
+    this.tankLiters = this.tankCapacity;
     this.tank = 100;
+    this.rolling = false;
     this.steerAngle = 0;
     this.airTime = 0;
     this.upsideDownTime = 0;
@@ -124,8 +140,29 @@ export class Car {
     this.prevQuaternion.copy(this.currQuaternion);
   }
 
+  // The three trims from the reveal. Switching trims gives you that trim's full air tank.
+  // performance: fans only. thrust: fans + 4 rear thrusters (200 L).
+  // rocket: all 10 thrusters: rear, 4 corner (lift and roll), 2 front (yaw) (600 L).
   setMode(mode) {
     this.mode = mode;
+    if (mode === "rocket") {
+      this.tankCapacity = CONFIG.thrusters.tankLitersRocket;
+    } else if (mode === "thrust") {
+      this.tankCapacity = CONFIG.thrusters.tankLitersThrust;
+    } else {
+      this.tankCapacity = 0;
+    }
+    this.tankLiters = this.tankCapacity;
+    this.rolling = false;
+    this.updateTankPercent();
+  }
+
+  hasRearThrusters() {
+    return this.mode === "thrust" || this.mode === "rocket";
+  }
+
+  hasCornerThrusters() {
+    return this.mode === "rocket";
   }
 
   // One physics step. Call this BEFORE world.step().
@@ -192,7 +229,8 @@ export class Car {
     }
     this.fanPower = moveToward(this.fanPower, fanTarget, dt / CONFIG.fans.spinUpSeconds);
     const contacts = this.countWheelContacts();
-    if (this.fanPower > 0 && contacts > 0) {
+    // (Skipped during a barrel roll, so the fans don't fight the hop.)
+    if (this.fanPower > 0 && contacts > 0 && !this.rolling) {
       // Pull along the car's own "down", so it also sticks to ramps and slopes.
       const suction = this.fanPower * CONFIG.fans.downforceG * mass * GRAVITY * (contacts / 4);
       body.addForce(scaled(up, -suction), true);
@@ -206,39 +244,78 @@ export class Car {
     // ----- Thrusters and the air tank -----
     this.thrusting = false;
     this.lifting = false;
-    const wantsThrust = input.thrust && this.mode !== "performance";
-    this.tankEmptyPressed = wantsThrust && this.tank <= 0;
-    if (wantsThrust && this.tank > 0) {
-      if (this.mode === "rocket") {
-        // Upward thrusters. Tilting the phone leans the push forward or back.
-        // Phone tilted forward = pitch -1 = lean the push forward.
-        this.lifting = true;
-        const lean = THREE.MathUtils.degToRad(-input.pitch * CONFIG.rocket.maxTiltDeg);
-        const direction = scaled(up, Math.cos(lean)).addScaledVector(forward, Math.sin(lean));
-        body.addForce(scaled(direction, CONFIG.rocket.liftG * mass * GRAVITY), true);
-        this.tank = this.tank - (dt * 100) / CONFIG.rocket.hoverSeconds;
-      } else {
-        // Rear thrusters push the car forward.
-        this.thrusting = true;
-        body.addForce(scaled(forward, CONFIG.thrusters.forceG * mass * GRAVITY), true);
-        this.tank = this.tank - (dt * 100) / CONFIG.thrusters.fullThrustSeconds;
-      }
+    this.landingBurn = false;
+    let airUsed = 0; // liters this step
+    const rocket = CONFIG.rocket;
+    const wantsThrust = input.thrust && this.hasRearThrusters();
+    const wantsLift = input.lift && this.hasCornerThrusters();
+    this.tankEmptyPressed = (wantsThrust || wantsLift) && this.tankLiters <= 0;
+
+    // Rear thrusters push the car forward.
+    if (wantsThrust && this.tankLiters > 0) {
+      this.thrusting = true;
+      body.addForce(scaled(forward, CONFIG.thrusters.rearForce), true);
+      airUsed = airUsed + this.airForForce(CONFIG.thrusters.rearForce, dt);
       if (!this.usedThrustBefore) {
         this.usedThrustBefore = true;
         this.addEvent("first_thrust");
       }
-      if (this.tank <= 0) {
-        this.tank = 0;
+    }
+
+    // LIFT: the four corner thrusters push up. Tipping the phone forward (pitch -1) leans the push forward.
+    if (wantsLift && this.tankLiters > 0) {
+      this.lifting = true;
+      const lean = THREE.MathUtils.degToRad(-input.pitch * rocket.maxTiltDeg);
+      const direction = scaled(up, Math.cos(lean)).addScaledVector(forward, Math.sin(lean));
+      const liftForce = rocket.liftG * mass * GRAVITY;
+      body.addForce(scaled(direction, liftForce), true);
+      airUsed = airUsed + this.airForForce(liftForce, dt);
+    }
+
+    // Soft landing: if we're falling too fast to stop before the ground, the corner thrusters
+    // brake the fall. They start just in time, like a rocket landing.
+    const fallSpeed = -velocity.y;
+    const brakeAcceleration = (rocket.landingBurnG - 1) * GRAVITY;
+    const brakeDistance = (fallSpeed * fallSpeed - rocket.touchdownSpeed * rocket.touchdownSpeed) / (2 * brakeAcceleration);
+    const fallingFast = fallSpeed > rocket.touchdownSpeed && this.altitude < brakeDistance + 0.5;
+    if (this.hasCornerThrusters() && rocket.autoLandingBurn && this.airborne && fallingFast &&
+        !this.lifting && !this.rolling && up.y > 0.5 && this.tankLiters > 0) {
+      this.landingBurn = true;
+      const burnForce = rocket.landingBurnG * mass * GRAVITY;
+      body.addForce({ x: 0, y: burnForce, z: 0 }, true);
+      airUsed = airUsed + this.airForForce(burnForce, dt);
+    }
+
+    // ROLL: start a barrel roll when the button is first pressed.
+    const rollPressed = input.roll !== 0 && this.lastRollInput === 0;
+    this.lastRollInput = input.roll;
+    if (rollPressed && this.hasCornerThrusters() && !this.rolling) {
+      this.startRoll(input.roll);
+    }
+    if (this.rolling) {
+      this.continueRoll(dt);
+    }
+    if (this.hopTime > 0) {
+      this.hopTime = this.hopTime - dt;
+    }
+
+    // Take the air out of the tank, or refill it when the thrusters are quiet.
+    if (airUsed > 0) {
+      this.tankLiters = this.tankLiters - airUsed;
+      this.refillTimer = CONFIG.thrusters.refillDelay;
+      if (this.tankLiters <= 0) {
+        this.tankLiters = 0;
         this.addEvent("tank_empty");
       }
-      this.refillTimer = CONFIG.thrusters.refillDelay;
-    } else if (wantsThrust) {
-      // Holding the button on an empty tank does nothing, and doesn't refill either.
+    } else if (wantsThrust || wantsLift) {
+      // Holding a thruster button on an empty tank does nothing, and doesn't refill either.
     } else if (this.refillTimer > 0) {
       this.refillTimer = this.refillTimer - dt;
     } else {
-      this.tank = Math.min(100, this.tank + (dt * 100) / CONFIG.thrusters.refillSeconds);
+      const refillPerSecond = this.tankCapacity / CONFIG.thrusters.refillSeconds;
+      this.tankLiters = Math.min(this.tankCapacity, this.tankLiters + refillPerSecond * dt);
     }
+    this.updateTankPercent();
 
     // ----- Air drag (keeps top speed sane while thrusting) -----
     const speedSquared = velocity.lengthSq();
@@ -247,11 +324,15 @@ export class Car {
       body.addForce(drag, true);
     }
 
-    // ----- In the air -----
-    if (this.airborne) {
+    // ----- In the air (the barrel roll takes over the spin while it runs) -----
+    this.yawThrust = 0;
+    if (this.airborne && !this.rolling) {
       if (this.mode === "rocket") {
-        // Flying: stay level like a drone, and turn with the steering.
-        this.levelOut(-input.steer * CONFIG.rocket.yawRate, dt);
+        // Flying: stay level like a drone, and turn with the front yaw thrusters.
+        this.levelOut(-input.steer * rocket.yawRate, dt);
+        if (Math.abs(input.steer) > 0.15) {
+          this.yawThrust = Math.sign(input.steer);
+        }
       } else if (this.altitude < CONFIG.air.landingAssistHeight) {
         // Landing assist: rotate back to level before touching down.
         this.levelOut(null, dt);
@@ -302,8 +383,9 @@ export class Car {
       this.crashCooldown = 1.0;
     }
 
-    // Upside down for a while = tell the player to reset.
-    if (this.getUp().y < 0.1) {
+    // Upside down for a while = tell the player to reset. Driving upside down on a ramp with the
+    // fans on is allowed (wheels still touching), so only count it when no wheel is touching.
+    if (this.getUp().y < 0.1 && this.countWheelContacts() === 0) {
       this.upsideDownTime = this.upsideDownTime + dt;
     } else {
       this.upsideDownTime = 0;
@@ -341,9 +423,21 @@ export class Car {
       wheel.spin.rotation.x = this.vehicle.wheelRotation(i) || 0;
     }
 
+    // Which of the four corner thrusters are firing (order: front-left, front-right, rear-left, rear-right).
+    // A roll to the right pushes the LEFT side up, so the left pair fires.
+    let cornerFiring = [false, false, false, false];
+    if (this.lifting || this.landingBurn || this.hopTime > 0) {
+      cornerFiring = [true, true, true, true];
+    } else if (this.rolling && this.rollDirection > 0) {
+      cornerFiring = [true, false, true, false];
+    } else if (this.rolling) {
+      cornerFiring = [false, true, false, true];
+    }
+
     model.setFans(this.fanPower, time);
     model.setThrust(this.thrusting, time);
-    model.setLift(this.lifting, time);
+    model.setCornerThrusters(cornerFiring, time);
+    model.setYawThrusters(this.yawThrust, time);
     model.setBraking(this.braking);
 
     // Particles: thruster plumes and air rushing out from under the car.
@@ -362,13 +456,27 @@ export class Car {
         }
       }
     }
-    if (this.lifting) {
-      for (const nozzle of model.liftNozzles) {
-        for (let n = 0; n < 3; n++) {
-          const spot = model.root.localToWorld(nozzle.clone());
-          const push = scaled(up, -(8 + Math.random() * 5)).add(randomVector(4));
-          this.plume.emit(spot, push.add(carVelocity), 0.6 + Math.random() * 0.4);
-        }
+    for (let i = 0; i < 4; i++) {
+      if (!cornerFiring[i]) {
+        continue;
+      }
+      for (let n = 0; n < 3; n++) {
+        const spot = model.root.localToWorld(model.liftNozzles[i].clone());
+        const push = scaled(up, -(8 + Math.random() * 5)).add(randomVector(4));
+        this.plume.emit(spot, push.add(carVelocity), 0.6 + Math.random() * 0.4);
+      }
+    }
+    if (this.yawThrust !== 0) {
+      // Turning right pushes the nose right, so the thruster on the left of the nose fires outward.
+      let index = 0;
+      if (this.yawThrust < 0) {
+        index = 1;
+      }
+      const nozzle = model.yawNozzles[index];
+      const outward = new THREE.Vector3(Math.sign(nozzle.x), 0, 0).applyQuaternion(model.root.quaternion);
+      for (let n = 0; n < 2; n++) {
+        const spot = model.root.localToWorld(nozzle.clone());
+        this.plume.emit(spot, scaled(outward, 8 + Math.random() * 4).add(carVelocity), 0.4);
       }
     }
     if (this.fanPower > 0.2 && !this.airborne) {
@@ -399,6 +507,70 @@ export class Car {
     this.events.push(name);
     if (this.events.length > 10) {
       this.events.shift();
+    }
+  }
+
+  // ----- Barrel roll -----
+  // Like the reveal car, the roll is computer-controlled: the player just asks for it.
+  // On the ground, the four corner thrusters first kick the car up so it has room to spin.
+
+  startRoll(direction) {
+    const rocket = CONFIG.rocket;
+    let airNeeded = rocket.rollAirLiters;
+    if (!this.airborne) {
+      airNeeded = airNeeded + rocket.hopAirLiters;
+    }
+    if (this.tankLiters < airNeeded) {
+      this.addEvent("tank_empty");
+      return;
+    }
+    this.tankLiters = this.tankLiters - airNeeded;
+    this.refillTimer = CONFIG.thrusters.refillDelay;
+
+    if (!this.airborne) {
+      const v = this.body.linvel();
+      this.body.setLinvel({ x: v.x, y: Math.max(v.y, 0) + rocket.rollHopSpeed, z: v.z }, true);
+      this.hopTime = 0.25;
+    }
+    this.rolling = true;
+    this.rollDirection = direction;
+    this.rollTurned = 0;
+    this.rollTime = 0;
+    this.addEvent("barrel_roll");
+  }
+
+  continueRoll(dt) {
+    this.rollTime = this.rollTime + dt;
+    // Give the hop a moment to lift the wheels off the ground before spinning.
+    if (!this.airborne && this.rollTime < 0.15) {
+      return;
+    }
+    // Spin around the car's own nose-to-tail line. A positive spin around "forward" lifts the
+    // left side (+X), which is a roll to the RIGHT. Any other spin is cancelled so the roll is clean.
+    const rate = (2 * Math.PI) / CONFIG.rocket.rollSeconds;
+    const spin = this.getForward().multiplyScalar(rate * this.rollDirection);
+    this.body.setAngvel(spin, true);
+    this.rollTurned = this.rollTurned + rate * dt;
+
+    // Stop after most of a full turn, as soon as the car is upright again.
+    // (Starting upside down, e.g. off the curl ramp, that's 1.5 turns, which looks great.)
+    const upright = this.getUp().y > 0.97;
+    if ((this.rollTurned > Math.PI * 1.5 && upright) || this.rollTime > 3) {
+      this.rolling = false;
+      this.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    }
+  }
+
+  // Liters of air used by a thruster pushing with this force for dt seconds.
+  airForForce(force, dt) {
+    return (force / CONFIG.thrusters.rearForce) * CONFIG.thrusters.litersPerSecondAtFullRear * dt;
+  }
+
+  updateTankPercent() {
+    if (this.tankCapacity > 0) {
+      this.tank = (this.tankLiters / this.tankCapacity) * 100;
+    } else {
+      this.tank = 0;
     }
   }
 

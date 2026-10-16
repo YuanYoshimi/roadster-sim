@@ -17,7 +17,9 @@ export const DRIVE_MODES = ["performance", "thrust", "rocket"];
 
 // Controller input.
 // steer: -1 = full left, +1 = full right.
-// pitch: -1 = phone tipped forward (fly forward in Rocket mode), +1 = tipped back.
+// thrust: rear thrusters (held). lift: downward thrusters (held, Rocket mode).
+// roll: barrel roll request: -1 = roll left, +1 = roll right, 0 = none (Rocket mode).
+// pitch: -1 = phone tipped forward (lean the lift forward), +1 = tipped back.
 export function makeInput() {
   return {
     type: MSG.INPUT,
@@ -26,6 +28,8 @@ export function makeInput() {
     brake: 0,
     fans: false,
     thrust: false,
+    lift: false,
+    roll: 0,
     pitch: 0,
     reset: false,
   };
@@ -41,12 +45,15 @@ export function cleanInput(raw) {
   input.pitch = clampNumber(raw.pitch, -1, 1);
   input.fans = raw.fans === true;
   input.thrust = raw.thrust === true;
+  input.lift = raw.lift === true;
+  input.roll = Math.round(clampNumber(raw.roll, -1, 1));
   input.reset = raw.reset === true;
   return input;
 }
 
 // Car state, sent by the game.
-// events is a list of short names like "crash", "landing", "tank_empty", "first_thrust".
+// events is a list of short names like "crash", "landing", "tank_empty", "first_thrust",
+// "barrel_roll", "big_jump", "flip", "goal_reached".
 export function makeState() {
   return {
     type: MSG.STATE,

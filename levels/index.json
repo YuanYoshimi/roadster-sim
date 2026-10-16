@@ -1,4 +1,5 @@
 [
   { "file": "blank", "name": "Blank Test Area" },
-  { "file": "tesla-event", "name": "Reveal Jump" }
+  { "file": "reveal-curl", "name": "Reveal Curl (upside down + barrel roll)" },
+  { "file": "tesla-event", "name": "Reveal Jump (over the lineup)" }
 ]

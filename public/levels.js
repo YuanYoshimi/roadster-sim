@@ -3,8 +3,9 @@
 // Never hard-code the world. Every map is a JSON file in levels/ (see levels/blank.json).
 //
 // Positions are in meters. heading is in degrees: 0 faces +Z, 90 faces +X.
-// Prop types: box, wall, ramp, cone, checkpoint, parking_spot, paint (flat color, no collision).
-// Car kinds: sedan, suv, pickup, van, semi. Behaviors so far: parked.
+// Prop types: box, wall, ramp, curl (curves up and over, upside down), cone, checkpoint,
+// parking_spot, paint (flat color, no collision).
+// Car kinds: compact, sedan, suv, pickup, van, semi. Behaviors so far: parked.
 
 import * as THREE from "three";
 
@@ -132,6 +133,8 @@ function buildProp(built, prop) {
     addSolidBox(built, prop.x, height / 2, prop.z, prop.thickness || 0.6, height, prop.length || 20, prop.heading || 0, prop.color || "#a3a8b0");
   } else if (prop.type === "ramp") {
     buildRamp(built, prop);
+  } else if (prop.type === "curl") {
+    buildCurl(built, prop);
   } else if (prop.type === "cone") {
     buildCone(built, prop);
   } else if (prop.type === "checkpoint") {
@@ -198,6 +201,102 @@ function buildRamp(built, prop) {
   addMesh(built, mesh);
 }
 
+// The reveal's curved ramp: it starts flat on the ground and bends up and over, so a car
+// driving in ends up upside down at the top (with the fans on, it sticks there).
+// (x, z) is where the curve starts, and it bends toward the heading direction.
+// radius = size of the curve, degrees = how far it bends (180 = fully upside down).
+function buildCurl(built, prop) {
+  const radius = prop.radius || 10;
+  const width = prop.width || 8;
+  const degrees = prop.degrees || 180;
+  const steps = 60;
+  const rotation = headingToQuaternion(prop.heading || 0);
+
+  // Two points (left and right edge) for each step along the curve.
+  const points = [];
+  for (let i = 0; i <= steps; i++) {
+    const angle = THREE.MathUtils.degToRad((degrees * i) / steps);
+    const z = radius * Math.sin(angle);
+    const y = radius - radius * Math.cos(angle);
+    points.push(-width / 2, y, z);
+    points.push(width / 2, y, z);
+  }
+  // Two triangles per step make the driving surface.
+  const triangles = [];
+  for (let i = 0; i < steps; i++) {
+    const a = i * 2;
+    triangles.push(a, a + 2, a + 1);
+    triangles.push(a + 1, a + 2, a + 3);
+  }
+  const vertices = new Float32Array(points);
+  const indices = new Uint32Array(triangles);
+
+  const collider = built.RAPIER.ColliderDesc.trimesh(vertices, indices)
+    .setTranslation(prop.x, 0, prop.z)
+    .setRotation(rotation)
+    .setFriction(1.0);
+  built.fixedColliders.push(built.world.createCollider(collider));
+
+  // Graphics: a solid curved band. Its inside face is the driving surface; the outside gives it
+  // thickness so it still looks solid when seen from the side.
+  const group = new THREE.Group();
+  const thickness = 0.6;
+  const profile = new THREE.Shape();
+  for (let i = 0; i <= steps; i++) {
+    const angle = THREE.MathUtils.degToRad((degrees * i) / steps);
+    const z = radius * Math.sin(angle);
+    const y = radius - radius * Math.cos(angle);
+    if (i === 0) {
+      profile.moveTo(z, y);
+    } else {
+      profile.lineTo(z, y);
+    }
+  }
+  for (let i = steps; i >= 0; i--) {
+    const angle = THREE.MathUtils.degToRad((degrees * i) / steps);
+    profile.lineTo((radius + thickness) * Math.sin(angle), radius - (radius + thickness) * Math.cos(angle));
+  }
+  const geometry = new THREE.ExtrudeGeometry(profile, { depth: width, bevelEnabled: false });
+  geometry.rotateY(-Math.PI / 2); // side view x -> world z, width -> world x
+  geometry.translate(width / 2, 0, 0);
+  const band = new THREE.Mesh(
+    geometry,
+    new THREE.MeshStandardMaterial({ color: prop.color || "#e2a93b", roughness: 0.7, flatShading: true })
+  );
+  band.position.y = 0.01; // a hair above the ground so they don't flicker
+  band.receiveShadow = true;
+  band.castShadow = true;
+  group.add(band);
+
+  // Rails along both edges so the shape reads clearly from far away.
+  const railMaterial = new THREE.MeshStandardMaterial({ color: "#c9ced6", roughness: 0.5, metalness: 0.3 });
+  for (const side of [-1, 1]) {
+    const railPoints = [];
+    for (let i = 0; i <= steps; i++) {
+      railPoints.push(new THREE.Vector3(points[i * 6 + 3] * side, points[i * 6 + 4], points[i * 6 + 5]));
+    }
+    const rail = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(railPoints), steps, 0.18, 8), railMaterial);
+    rail.castShadow = true;
+    group.add(rail);
+  }
+
+  // A support frame behind the curve (no collisions, it's out of the car's way).
+  const top = radius * 2;
+  for (const side of [-1, 1]) {
+    const column = new THREE.Mesh(new THREE.BoxGeometry(0.5, top + 0.6, 0.5), railMaterial);
+    column.position.set(side * (width / 2 + 0.6), (top + 0.6) / 2, radius + 1.5);
+    column.castShadow = true;
+    group.add(column);
+  }
+  const beam = new THREE.Mesh(new THREE.BoxGeometry(width + 1.7, 0.4, radius + 1.8), railMaterial);
+  beam.position.set(0, top + 0.6, (radius + 1.5) / 2);
+  group.add(beam);
+
+  group.position.set(prop.x, 0, prop.z);
+  group.quaternion.copy(rotation);
+  addMesh(built, group);
+}
+
 // Cones are light and loose, so you can knock them flying.
 function buildCone(built, prop) {
   const halfHeight = 0.35;
@@ -249,6 +348,7 @@ function buildParkingSpot(built, prop) {
 
 // Simple box-shaped vehicles for jumping over or getting in the way.
 const CAR_SIZES = {
+  compact: { length: 3.6, width: 1.8, height: 1.4 }, // small two-seat robotaxi
   sedan: { length: 4.8, width: 1.85, height: 1.45 },
   suv: { length: 4.9, width: 2.0, height: 1.8 },
   pickup: { length: 5.8, width: 2.05, height: 1.9 },

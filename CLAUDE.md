@@ -8,7 +8,7 @@
 
 ## Current status (update as you go)
 
-- **Oct 16 prototype is on `main`:** keyboard driving, fans, thrusters, 3 modes, landing assist, Blank + Reveal Jump levels, phone yoke over an HTTPS tunnel. AI coach and scenario generator are not built yet.
+- **Oct 16 prototype is on `main`:** keyboard driving, fans, all 10 thrusters (BOOST, LIFT, automatic barrel ROLL, yaw, soft landing), 3 trims, Blank + Reveal Curl + Reveal Jump levels, phone yoke over an HTTPS tunnel (tilt works upright or flat; drag-the-yoke fallback). The spec was updated to match the real Oct 15 reveal (see Milestone 3, "Reveal facts"). AI coach and scenario generator are not built yet.
 - The repo is **private** for now. Make it public before submitting (command in README).
 - `npm run phone` tries cloudflared, then falls back to ngrok (some networks block Cloudflare quick tunnels). `npm run phone:ngrok` skips straight to ngrok.
 - Testing tip: `window.game` in the browser console exposes the car, world and camera. `game.frame(time)` steps one frame by hand.
@@ -17,7 +17,7 @@
 
 We're a **team of two**: Yuan and a friend, building at the **Tokyo Agent Hackathon** (+81 Builders) on **Saturday Oct 17, 2026**. Each of us runs our own Claude Code on our own laptop, working in the **same GitHub repo**. Building starts at 10:30 and **submissions close at 16:00 sharp**. Judging is a **3-minute live demo** at our table, and the top 5 teams demo on a projector.
 
-**The project:** a browser driving simulator of Tesla's newly revealed next-gen Roadster. The Roadster was revealed on Oct 15, 2026. Its headline features are fan suction downforce and cold-gas thrusters that let it jump and fly. Most people have no idea how you'd actually drive a car like this. My sim lets you drive it using **your phone as the steering yoke**: tilt to steer, with on-screen buttons for gas, brake, fans, and thrusters. An **AI coach** teaches you how to use the fans and thrusters while you drive. Later, **AI-generated real-world situations** like busy Tokyo traffic or someone stealing your parking spot drop you into tricky scenarios.
+**The project:** a browser driving simulator of Tesla's newly revealed next-gen Roadster. The Roadster was revealed on Oct 15, 2026. Its headline features are fan suction (up to 2 g, enough to drive upside down) and 10 cold-gas thrusters that let it boost, jump, barrel roll and fly (see "Reveal facts" below). Most people have no idea how you'd actually drive a car like this. My sim lets you drive it using **your phone as the steering yoke**: tilt to steer, with on-screen buttons for gas, brake, fans, and thrusters. An **AI coach** teaches you how to use the fans and thrusters while you drive. Later, **AI-generated real-world situations** like busy Tokyo traffic or someone stealing your parking spot drop you into tricky scenarios.
 
 **The pitch in one line:** "Tesla just revealed a car that can stick to the ceiling and fly. Nobody knows how to drive it. Here's a simulator with an AI instructor, controlled with your phone."
 
@@ -96,7 +96,9 @@ Person A builds Milestones 2, 4, and 6 (phone, AI coach, AI scenario generator).
 Define these in the skeleton, on day one, so both people can build against them:
 
 - **Controller input** (phone → server → game, about 30×/s):
-  `{ type: "input", steer: -1..1, gas: 0..1, brake: 0..1, fans: true/false, thrust: true/false, pitch: -1..1, reset: true/false }`
+  `{ type: "input", steer: -1..1, gas: 0..1, brake: 0..1, fans: true/false, thrust: true/false, lift: true/false, roll: -1|0|1, pitch: -1..1, reset: true/false }`
+  (`thrust` = rear BOOST, `lift` = corner thrusters up, `roll` = barrel-roll request left/right, `pitch` -1 = phone tipped forward)
+- **Mode change** (phone → game): `{ type: "mode", mode: "performance" | "thrust" | "rocket" }`
 - **Car state** (game → coach, every second and on events):
   `{ type: "state", speedKmh, steer, fansOn, tankPercent, mode, airborne, altitude, events: [...], goalText }`
 - **Coach tip** (server → game): `{ type: "tip", text, lang }`
@@ -123,14 +125,16 @@ Include a **fake input generator** (keyboard) and a **fake tip** so Person B can
   - W/S: gas/brake-reverse
   - A/D: steer
   - F: toggle fans
-  - Space: thruster
+  - Space: rear thrusters (BOOST)
+  - Shift: lift (Rocket) · Q/E: barrel roll left/right (Rocket) · ↑/↓: lean the lift forward/back
+  - 1/2/3: trim (Performance / Thrust / Rocket)
   - R: reset car upright at spawn
 - A basic HUD: speed (km/h), fans ON/OFF, thruster tank %, and altitude.
 
 ### Milestone 2: Phone as the yoke
 - `phone.html` is a landscape, full-screen controller styled like a mobile racing game.
-  - **Tilt the phone left and right like a steering wheel to steer** (use the phone's roll angle, with a dead zone and smoothing).
-  - Big on-screen buttons: **GAS** (right side, hold), **BRAKE** (left side, hold), **FANS** (toggle), **THRUST** (hold), **RESET**.
+  - **Tilt the phone left and right to steer.** Steering = how far the phone's long edge is tilted from level, so it works whether the phone is held upright like a wheel or flat like a game controller. Dead zone and smoothing. If tilt data isn't arriving, show "tilt: no data" and let the player **drag the yoke** on screen instead.
+  - Big on-screen buttons: **GAS** (right side, hold), **BRAKE** (left side, hold), **FANS** (toggle), **BOOST** (rear thrusters, hold), **LIFT** (corner thrusters, hold, Rocket), **ROLL** (tap, Rocket, rolls toward the side you're steering, default right), **MODE**, **CENTER**, **RESET**. Grey out buttons the current trim doesn't have.
   - A "Tap to start" button that requests motion permission on iOS.
   - A "Calibrate / center" button.
   - Show connection status, plus a small readout of the current steering angle so I can debug at the table.
@@ -139,22 +143,28 @@ Include a **fake input generator** (keyboard) and a **fake tip** so Person B can
 - Handle disconnects gracefully: if phone input stops, the car coasts to a stop.
 
 ### Milestone 3: The Roadster's special physics (the whole point)
-Base these on the reported reveal claims. Make it **fun and readable** first, realistic second. All numbers go in `config.js`.
+Base these on the reveal claims below. Make it **fun and readable** first, realistic second. All numbers go in `config.js`. Present them as Tesla's claims, not verified facts.
 
-- **Normal driving:** mass about 1,800 kg, grip about 1.2 g. The car slides if you take a turn too fast with the fans off.
-- **Fan suction (FANS toggle):** fans pull air from under the car, so they work **even when stopped**. When on:
-  - Add a strong downward force (up to about 2× the car's weight).
-  - Increase tire grip a lot, so you can corner at speeds where the car normally slides.
-  - Show a visual effect: lower ride height, a subtle air distortion or particles under the car, and a whine sound if audio is easy.
-  - Fans use battery or energy. Add a simple "energy" bar if it adds a decision. Optional.
-- **Cold-gas thrusters (THRUST, hold):** a big push in the car's forward direction, with a large plume particle effect and sound.
-  - The car has an **air tank** that empties fast: about **2 seconds of full thrust** from a full tank. It refills slowly while not thrusting.
-  - The thruster button does nothing when the tank is empty, and the HUD flashes.
-- **Drive modes**, selectable from the HUD or phone, based on the three reveal trims:
-  - **Performance:** fans only, no thrusters.
-  - **Thrust:** fans plus rear thrusters (default).
-  - **Rocket:** adds upward thrusters for hops or short hovers. In Rocket mode, holding THRUST while tilting the phone forward/back pitches upward thrust for a short flight (about 4–5 seconds of hover max on a full tank). Add a **landing assist** that auto-levels the car when it's close to the ground.
-- Make sure the car can drive off the ramp and **jump**, and recovers nicely (R to reset if it flips).
+#### Reveal facts (Oct 15, 2026 event at SpaceX McGregor; Tesla claims as reported by Electrek, TechCrunch, InsideEVs, Yahoo Autos)
+- **What the demo showed:** the car (computer-controlled, no driver) drove up a tall **curved ramp** and went vertical, then **upside down**, held on by fan suction. It came off the top, did a **mid-air barrel roll** powered by the thrusters, and **landed softly on all four wheels** in a white cloud of cold gas. It also **hopped over a lineup of vehicles** (a small robotaxi, pickup, semi, SUV and sedan), clearing the 13.5 ft semi by nearly double its height with the under-car thrusters, and did another roll. Musk: the stunts can be done "whenever you'd like".
+- **Fans:** 4 underbody fans (~20 kW each) with a skirt seal. "Up to two g's" of suction, enough to hold the car upside down even when stopped. Cornering "over 2 g".
+- **Thrusters (Rocket trim has 10):** 4 rear ports (over 80 kN, "4–5x the force the tires can"), 4 pointing **down at the corners** (lift, hops, roll), and 2 at the **front for yaw**. Air at 5,500–10,000 psi (reports differ).
+- **Air tanks:** Thrust trim 200 L; Rocket trim 600 L (the extra 400 L replaces the passenger seat). Full rear thrust lasts about 1.5–2 s on 600 L; hover about 4–6 s. Real refill takes hours.
+- **Trims:** Performance (fans + active aero, no thrusters, 0–60 mph under 1.6 s, 210 mph), Thrust (adds rear thrusters, 0–60 under 0.9 s, 230 mph), Rocket (all 10 thrusters, single seat, 0–60 under 0.59 s, over 230 mph, invite only, not street legal). All about 300 mi range. Production planned for 2028.
+- **Look:** "Ano White" paint, hidden headlights, full-length taillight, flush aero, gold-tinted visor-like windows, inspired by the SR-71 / F-35, yoke steer-by-wire.
+- **Mass:** not announced (reports range from under 1,700 kg to ~2,350 kg). We use 1,800 kg.
+
+#### How we model it
+- **Normal driving:** grip about 1.2 g. The car runs wide if you take a turn too fast with the fans off. Motor alone + fans does 0–100 km/h in about 1.55 s.
+- **Fans (FANS toggle):** force toward the road along the car's own "down" (2× its weight) while wheels touch, so it works when stopped, on ramps, and **upside down** (2 g suction − 1 g gravity). More downforce = more grip (about 3.3 g cornering). Lower ride height plus a cyan glow and air particles.
+- **BOOST (rear thrusters, Thrust + Rocket):** 80 kN forward. Uses air in proportion to force (330 L/s at full), so 200 L ≈ 0.6 s and 600 L ≈ 1.8 s.
+- **LIFT (corner thrusters, Rocket, hold):** 1.35× weight upward; tip the phone forward/back to lean it. About 6 s of hover on a full tank.
+- **ROLL (Rocket, tap):** automatic, like the reveal car. On the ground the corner thrusters first kick the car up (~3 m hop), then one side's corner thrusters spin it 360° around its long axis in ~0.85 s, and it stops upright. Rolls toward the side you're steering. Off the top of the curl (upside down) it does 1.5 turns and lands upright. Costs 50 L (+40 L for the hop).
+- **Yaw thrusters (Rocket, in the air):** steering turns the car while flying.
+- **Soft landing (Rocket, automatic):** when falling too fast to stop, the corner thrusters fire just in time to touch down at about 3 m/s.
+- **Landing assist (all trims):** auto-levels the car near the ground. R / RESET if it flips.
+- **Trims** switch from the HUD, phone MODE, or keys 1/2/3. **Rocket is the default** because it has every demo feature. Buttons a trim doesn't have do nothing (greyed out on the phone).
+- **Stunt camera:** while the car is upside down, rolling, or high in the air, the chase camera swings out to the side so the move is visible.
 
 ### Milestone 4: AI coach (the main AI feature and the sponsor tool usage)
 - Every few seconds, and immediately on key events, the game sends a short **car state summary** to the server. Key events include:
@@ -195,13 +205,15 @@ Base these on the reported reveal claims. Make it **fun and readable** first, re
 }
 ```
 
-- Prop types to start: `box`, `ramp`, `wall`, `cone`, `checkpoint`, `parking_spot`.
+- Prop types to start: `box`, `ramp`, `curl` (the reveal's curved ramp that bends up and over until upside down: `radius`, `width`, `degrees`), `wall`, `cone`, `checkpoint`, `parking_spot`, `paint` (flat color, no collision).
+- Parked car kinds: `compact` (robotaxi-sized), `sedan`, `suv`, `pickup`, `van`, `semi`. Generic shapes only, never Tesla models.
 - Car behaviors to start: `parked`, `drive_straight` (constant speed along heading), `follow_path` (list of points), `rival_to_spot` (drives toward a parking spot).
 - `"model"` can later point to a `.glb` file (e.g. a Tokyo street chunk from Project PLATEAU, or a racetrack). Load it with GLTFLoader and generate a static trimesh collider from it. Write this loader path even if no `.glb` exists yet.
 - A **level select menu** on the game screen (and ideally the phone).
 - Levels to include:
   1. `blank.json`: flat ground, one ramp, a few cones. **Default.**
-  2. `tesla-event.json`: recreation of the reveal stunt. A runway, a big ramp, and a row of parked box-shaped vehicles to **jump over** (different sizes: sedan, SUV, pickup, semi). Goal: clear them all and land.
+  2. `reveal-curl.json`: the reveal's main stunt. A runway into a 10 m radius curl. Fans on, drive up and over (upside down at ~20 m), ROLL off the top, soft-land in the green zone.
+  3. `tesla-event.json` ("Reveal Jump"): a runway, a big ramp, and the reveal lineup to **jump over** (compact robotaxi, pickup, semi, SUV, sedan). Hold LIFT for height, tap ROLL for style. Goal: clear them all and land.
   3. `parking-steal.json`: a simple block-city street. A free parking spot is ahead, and a rival car is heading for it. Goal: get into the spot first. You'll need the thruster and/or fans to win.
   4. `slalom.json`: cones and checkpoints with a timer. Teaches fan grip.
 - Later, optionally: `tokyo-shibuya.json` using a PLATEAU model chunk (free 3D Tokyo city data, free for commercial use, FBX → convert to glb). **Not in the first build.**
@@ -218,7 +230,7 @@ Base these on the reported reveal claims. Make it **fun and readable** first, re
 - Particle effects, plus screen shake on thrust and landing.
 - **Stunt replay** of the last 10 seconds (record position and rotation each frame, then play back).
 - Score per level (time, flips, clean landing).
-- A small "physics facts" panel explaining the real reveal claims (fans work at standstill, about 2 s of thrust, etc.). Present these as Tesla's claims, not verified facts.
+- A small "physics facts" panel explaining the real reveal claims (2 g fan suction that works at standstill and upside down, 10 thrusters, 80 kN, 600 L of air ≈ 1.5–2 s of full thrust, 0–60 under 0.59 s). Present these as Tesla's claims, not verified facts.
 
 ## Things the humans do (not Claude Code)
 - Get ai& credentials from the sponsor guide. Each person puts them in their own local `.env`. Share the key privately (e.g. a DM), **never in the repo**.

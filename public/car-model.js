@@ -18,8 +18,9 @@ export function buildCarModel() {
   const body = new THREE.Group(); // everything except the wheels
   root.add(body);
 
+  // Bright white paint and gold-tinted glass (the reveal car's windows look like a spacesuit visor).
   const paint = new THREE.MeshStandardMaterial({ color: 0xf3f4f6, metalness: 0.35, roughness: 0.3 });
-  const glass = new THREE.MeshStandardMaterial({ color: 0x0b0e13, metalness: 0.9, roughness: 0.08 });
+  const glass = new THREE.MeshStandardMaterial({ color: 0x5a4314, metalness: 0.95, roughness: 0.12 });
   const darkTrim = new THREE.MeshStandardMaterial({ color: 0x16181c, metalness: 0.4, roughness: 0.6 });
 
   // The main body and the cabin are each a side-view outline pushed out across the car's width.
@@ -58,13 +59,23 @@ export function buildCarModel() {
     body.add(nozzle);
   }
 
-  // Upward thrusters under the four corners (Rocket mode).
+  // Rocket trim: four downward thrusters under the corners (lift and barrel roll).
+  // Order: front-left, front-right, rear-left, rear-right (+X is the car's left).
   const liftNozzles = [
     new THREE.Vector3(0.62, -0.56, 1.75),
     new THREE.Vector3(-0.62, -0.56, 1.75),
     new THREE.Vector3(0.62, -0.56, -1.75),
     new THREE.Vector3(-0.62, -0.56, -1.75),
   ];
+  // Rocket trim: two sideways yaw thrusters at the nose (left, right).
+  const yawNozzles = [new THREE.Vector3(0.9, -0.3, 1.85), new THREE.Vector3(-0.9, -0.3, 1.85)];
+  const yawNozzleGeometry = new THREE.CylinderGeometry(0.05, 0.06, 0.06, 12);
+  yawNozzleGeometry.rotateZ(Math.PI / 2);
+  for (const spot of yawNozzles) {
+    const nozzle = new THREE.Mesh(yawNozzleGeometry, darkTrim);
+    nozzle.position.copy(spot);
+    body.add(nozzle);
+  }
 
   // Flames: simple glowing cones. The particle plume is added on top by car.js.
   const flameMaterial = new THREE.MeshBasicMaterial({
@@ -96,6 +107,20 @@ export function buildCarModel() {
     flame.visible = false;
     body.add(flame);
     liftFlames.push(flame);
+  }
+  const yawFlameGeometry = new THREE.ConeGeometry(0.06, 0.6, 10, 1, true);
+  yawFlameGeometry.rotateZ(-Math.PI / 2); // tip points toward +X
+  yawFlameGeometry.translate(0.3, 0, 0);
+  const yawFlames = [];
+  for (const spot of yawNozzles) {
+    const flame = new THREE.Mesh(yawFlameGeometry, flameMaterial);
+    flame.position.copy(spot);
+    if (spot.x < 0) {
+      flame.rotation.y = Math.PI; // the right-side one points toward -X
+    }
+    flame.visible = false;
+    body.add(flame);
+    yawFlames.push(flame);
   }
 
   // Fan glow: a cyan glow under the car plus glowing strips along the sides.
@@ -150,10 +175,20 @@ export function buildCarModel() {
     }
   }
 
-  function setLift(on, time) {
-    for (const flame of liftFlames) {
-      flame.visible = on;
-      flame.scale.set(1, 1.0 + Math.random() * 0.6 + 0.2 * Math.sin(time * 45), 1);
+  // firing: four true/false values, one per corner thruster.
+  function setCornerThrusters(firing, time) {
+    for (let i = 0; i < 4; i++) {
+      liftFlames[i].visible = firing[i];
+      liftFlames[i].scale.set(1, 1.0 + Math.random() * 0.6 + 0.2 * Math.sin(time * 45), 1);
+    }
+  }
+
+  // direction: +1 = turning right (left nozzle fires), -1 = turning left, 0 = off.
+  function setYawThrusters(direction, time) {
+    yawFlames[0].visible = direction > 0;
+    yawFlames[1].visible = direction < 0;
+    for (const flame of yawFlames) {
+      flame.scale.set(1 + Math.random() * 0.5 + 0.1 * Math.sin(time * 40), 1, 1);
     }
   }
 
@@ -166,9 +201,11 @@ export function buildCarModel() {
     wheels: wheels,
     rearNozzles: rearNozzles,
     liftNozzles: liftNozzles,
+    yawNozzles: yawNozzles,
     setFans: setFans,
     setThrust: setThrust,
-    setLift: setLift,
+    setCornerThrusters: setCornerThrusters,
+    setYawThrusters: setYawThrusters,
     setBraking: setBraking,
   };
 }

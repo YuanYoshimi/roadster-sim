@@ -2,18 +2,24 @@
 
 **Tesla just revealed a car that can stick to the road with fans and fly with thrusters. Nobody knows how to drive it. This is a browser simulator for it, and your phone is the steering wheel.**
 
-Hold your phone sideways and tilt it to steer. Use the on-screen buttons for gas, brake, fan suction and cold-gas thrusters. The fans pull the car onto the road, giving about 3× the cornering grip, and they work even when stopped. The thrusters give a 2-second blast from an air tank. Rocket mode adds upward thrusters for short hops and hovers. An AI coach powered by **ai& Inference** is coming next.
+Hold your phone sideways and tilt it to steer. Use the on-screen buttons for gas, brake, fan suction and the cold-gas thrusters. Like the real reveal car:
+- the fans pull with 2 g, so you can corner at about 3 g or **drive upside down** on the curl ramp;
+- 4 rear thrusters (**BOOST**) push with 80 kN from a compressed-air tank;
+- 4 corner thrusters (**LIFT**) let you hop and hover;
+- one tap of **ROLL** does an automatic **mid-air barrel roll** that lands upright.
+
+An AI coach powered by **ai& Inference** is coming next.
 
 > Built at the Tokyo Agent Hackathon (+81 Builders), Oct 17 2026.
-> The car is an **original stylized model inspired by the Tesla Roadster**. This project is **not affiliated with Tesla**, and it uses no Tesla assets, logos or 3D models. Physics numbers are loosely based on Tesla's public reveal claims (for example "fans work at a standstill" and "about 2 s of thrust"), presented as claims, not verified facts.
+> The car is an **original stylized model inspired by the Tesla Roadster**. This project is **not affiliated with Tesla**, and it uses no Tesla assets, logos or 3D models. Physics numbers are based on Tesla's claims at the Oct 15, 2026 reveal, as reported in the press (2 g fan suction, 10 thrusters, over 80 kN, 200 L / 600 L air tanks, 0–60 mph under 0.59 s for the Rocket trim). They are presented as claims, not verified facts. The details are in `CLAUDE.md` under "Reveal facts".
 
 ## Status: prototype
 
 | Works | Not built yet |
 |---|---|
-| Driving, fans, thrusters, 3 drive modes, landing assist | AI coach (Milestone 4) |
-| Phone yoke over HTTPS tunnel (tilt steering, buttons) | AI scenario generator (Milestone 6) |
-| Levels from JSON: Blank Test Area, Reveal Jump | Slalom and parking-steal levels, sound |
+| Driving, fans (incl. upside down), BOOST, LIFT, barrel ROLL, soft landing, 3 trims | AI coach (Milestone 4) |
+| Phone yoke over HTTPS tunnel (tilt upright or flat, drag fallback) | AI scenario generator (Milestone 6) |
+| Levels from JSON: Blank Test Area, Reveal Curl, Reveal Jump | Slalom and parking-steal levels, sound |
 
 ## Setup
 
@@ -49,18 +55,23 @@ The tunnel address changes each time you restart `npm run phone`, so rescan the 
 
 | Action | Phone | Keyboard |
 |---|---|---|
-| Steer | Turn the phone like a wheel | A / D (or ← / →) |
+| Steer | Tilt the phone left/right (upright or flat), or drag the yoke | A / D (or ← / →) |
 | Gas / brake + reverse | GAS / BRAKE (hold) | W / S |
 | Fans on/off | FANS | F |
-| Thrust | THRUST (hold) | Space |
-| Fly forward/back (Rocket mode) | Tip the phone forward/back while holding THRUST | ↑ / ↓ |
-| Drive mode | MODE | 1 / 2 / 3 |
+| Rear thrusters | BOOST (hold) | Space |
+| Lift: hop / hover (Rocket) | LIFT (hold), tip the phone forward/back to lean | Shift, ↑ / ↓ to lean |
+| Barrel roll (Rocket) | ROLL (tap, rolls toward the side you're steering) | Q (left) / E (right) |
+| Trim | MODE | 1 / 2 / 3 |
 | Reset car | RESET | R |
 | Camera (chase / cockpit / overhead) | | C |
 | Next level | | L |
 | Recenter steering | CENTER | |
 
-Drive modes: **Performance** (fans only), **Thrust** (fans + rear thrusters, default), **Rocket** (THRUST fires upward thrusters, about 4.5 s of hover per tank).
+Trims, as in the reveal: **Performance** (fans only), **Thrust** (fans + 4 rear thrusters, 200 L of air), **Rocket** (all 10 thrusters, 600 L of air; this is the default). In Rocket mode, steering while airborne fires the front yaw thrusters, and the corner thrusters soften hard landings by themselves.
+
+**Try the reveal stunt:** pick **Reveal Curl**, press FANS, drive up the curl at about 50–60 km/h, and tap ROLL as you come off the top upside down.
+
+The phone shows **tilt OK** (green) when motion data is arriving. If it says **tilt: no data**, reload the page, tap Start, then tap **Allow**. Meanwhile you can steer by dragging the yoke.
 
 ## How it works
 
@@ -80,8 +91,8 @@ Put `AI_BASE_URL`, `AI_API_KEY` and `AI_MODEL` in `.env` (copy `.env.example`). 
 ## Add a level
 
 1. Copy `levels/blank.json` to `levels/my-level.json` and edit it. Positions are in meters, and `heading` is in degrees (0 = +Z, 90 = +X).
-   - Prop types: `box`, `wall`, `ramp`, `cone`, `checkpoint`, `parking_spot`, `paint` (flat color, no collision).
-   - Car kinds: `sedan`, `suv`, `pickup`, `van`, `semi` (behavior `parked` for now).
+   - Prop types: `box`, `wall`, `ramp`, `curl` (bends up and over until upside down), `cone`, `checkpoint`, `parking_spot`, `paint` (flat color, no collision).
+   - Car kinds: `compact`, `sedan`, `suv`, `pickup`, `van`, `semi` (behavior `parked` for now).
    - Goal: `{ "type": "reach", "x", "z", "radius", "text" }`.
 2. Add it to `levels/index.json`.
 3. Pick it from the level menu, or open http://localhost:3000/game.html?level=my-level.
