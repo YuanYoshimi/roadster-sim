@@ -12,6 +12,9 @@ import { createEnvironment } from "./environment.js";
 import { TelemetryPanel } from "./telemetry.js";
 import { SoundEngine } from "./sound.js";
 import { Tour } from "./tour.js";
+import { RaceEngineer } from "./coach.js";
+
+const engineer = new RaceEngineer();
 
 // ---------- Renderer, scene, lights ----------
 
@@ -353,7 +356,7 @@ function readControls() {
   return input;
 }
 
-// Tell the phone (and later the coach) how the car is doing.
+// Feed the local engineer even if the phone's WebSocket is disconnected.
 let lastStateSent = 0;
 let pendingEvents = [];
 function sendStateIfDue(now) {
@@ -361,10 +364,6 @@ function sendStateIfDue(now) {
     return;
   }
   lastStateSent = now;
-  if (!socket || socket.readyState !== WebSocket.OPEN) {
-    pendingEvents = [];
-    return;
-  }
   const state = makeState();
   state.speedKmh = Math.round(car.speedKmh);
   state.steer = Math.round(lastInput.steer * 100) / 100;
@@ -375,7 +374,10 @@ function sendStateIfDue(now) {
   state.altitude = Math.round(car.altitude * 10) / 10;
   state.events = pendingEvents;
   state.goalText = hud.goalText.textContent;
-  socket.send(JSON.stringify(state));
+  engineer.update(state, lastInput.gas, document.hidden || document.body.classList.contains("atTitle"));
+  if (socket && socket.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify(state));
+  }
   pendingEvents = [];
 }
 
@@ -442,6 +444,7 @@ let currentLevelIndex = 0;
 let level = null;
 
 async function loadLevel(index) {
+  engineer.reset();
   currentLevelIndex = index;
   const entry = levelList[index];
   const data = await fetchLevel(entry.file);
@@ -463,6 +466,7 @@ async function loadLevel(index) {
 
 // Put the car back at the start, and restart the level's traffic, rival and timers.
 function restartScenario() {
+  engineer.reset();
   car.reset();
   if (level) {
     resetLevel(level);

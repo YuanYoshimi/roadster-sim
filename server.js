@@ -15,6 +15,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 import QRCode from "qrcode";
+import { installCoachRoutes } from "./server/ai.js";
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
 
@@ -73,7 +74,8 @@ app.get("/api/qr.svg", async function (req, res) {
   res.type("image/svg+xml").send(svg);
 });
 
-// TODO (Milestone 4 and 6): POST /api/coach and POST /api/scenario, using server/ai.js.
+// Friend's coach endpoint; scenario generation is a separate milestone.
+installCoachRoutes(app);
 
 function getPhoneUrl(req) {
   if (tunnelUrl) {

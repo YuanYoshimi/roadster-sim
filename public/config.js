@@ -4,6 +4,26 @@
 // Numbers marked "reveal" are Tesla's claims from the Oct 15, 2026 event (not verified).
 
 export const CONFIG = {
+  coach: {
+    language: "en",
+    intervalMs: 8000,
+    requestTimeoutMs: 3000,
+    maxHistory: 5,
+    maxQuestionLength: 400,
+    maxSummaryLength: 3000,
+    maxResponseLength: 350,
+    maxTokens: 1024, // reasoning models need room to produce the final short tip
+    maxConcurrentRequests: 2,
+    straightSteer: 0.15,
+    straightThrottle: 0.4,
+    stoppedSpeedKmh: 5,
+    tipLifetimeMs: 15000,
+    speechRate: 1.05,
+    pushToTalkKey: "KeyV",
+    lowTankPercent: 15,
+    cornerSpeedKmh: 70,
+    cornerSteer: 0.5,
+  },
   physics: {
     gravity: 9.81,
     timestep: 1 / 120, // physics runs at a fixed 120 steps per second (tire forces need small steps)

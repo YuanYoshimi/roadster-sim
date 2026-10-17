@@ -5,6 +5,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "test": "node --test",
     "start": "node server.js",
     "phone": "node server.js --tunnel",
     "phone:ngrok": "node server.js --tunnel=ngrok"
