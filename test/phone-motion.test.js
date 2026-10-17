@@ -13,6 +13,9 @@ function controller(secure) {
     getElementById: function (id) {
       if (!elements.has(id)) elements.set(id, {
         textContent: "", style: {}, lastChild: { textContent: "" },
+        clientWidth: 200,
+        blur: function () {},
+        setAttribute: function () {},
         addEventListener: function () {},
         classList: { add: function () {}, remove: function () {}, toggle: function () {} },
       });
@@ -20,7 +23,7 @@ function controller(secure) {
     },
   };
   const context = vm.createContext({
-    document: document, window: { isSecureContext: secure, orientation: 90 },
+    document: document, window: { isSecureContext: secure, orientation: 90, innerWidth: 800, innerHeight: 400, addEventListener: function () {} },
     CONFIG: CONFIG, MSG: MSG, DRIVE_MODES: DRIVE_MODES, makeInput: makeInput,
   });
   const source = readFileSync(new URL("../public/phone.js", import.meta.url), "utf8");
@@ -44,4 +47,41 @@ test("secure controller distinguishes missing permission from arriving sensor re
   assert.match(phone.elements.get("tilt").textContent, /tilt OK/);
   assert.equal(phone.elements.get("tiltHelp").style.display, "none");
   assert.notEqual(phone.run("input.steer"), 0);
+});
+
+test("portrait rotation lock still permits steering both ways with a sideways grip", function () {
+  const phone = controller(true);
+  phone.run("window.orientation = 0; window.innerWidth = 400; window.innerHeight = 800; onOrientation({beta: 0, gamma: -60}); calibrate()");
+  phone.run("for (let i = 0; i < 20; i++) onOrientation({beta: 25, gamma: -60})");
+  const right = phone.run("input.steer");
+  assert.ok(right > 0.7, "right tilt must steer right while the display stays portrait");
+  phone.run("for (let i = 0; i < 20; i++) onOrientation({beta: -25, gamma: -60})");
+  assert.ok(phone.run("input.steer") < -0.7, "left tilt must steer left");
+});
+
+test("locked portrait and native landscape produce equivalent steering", function () {
+  const landscape = controller(true);
+  const locked = controller(true);
+  locked.run("window.orientation = 0; window.innerWidth = 400; window.innerHeight = 800");
+  for (const phone of [landscape, locked]) {
+    phone.run("onOrientation({beta: 0, gamma: -60}); calibrate(); for (let i = 0; i < 10; i++) onOrientation({beta: 20, gamma: -60})");
+  }
+  assert.ok(Math.abs(landscape.run("input.steer") - locked.run("input.steer")) < 0.001);
+});
+
+test("flipped sideways grip preserves steering direction and drag follows the rotated yoke", function () {
+  const phone = controller(true);
+  phone.run("window.orientation = 0; window.innerWidth = 400; window.innerHeight = 800; layoutFlipped = true; onOrientation({beta: 0, gamma: 60}); calibrate(); for (let i = 0; i < 20; i++) onOrientation({beta: -25, gamma: 60})");
+  assert.ok(phone.run("input.steer") > 0.7);
+  const down = phone.run("pointerAcrossYoke({clientX: 100, clientY: 200})");
+  const up = phone.run("pointerAcrossYoke({clientX: 100, clientY: 100})");
+  assert.ok(up > down, "dragging up is controller-right in the flipped layout");
+});
+
+test("a toolbar resize does not silently recenter a turn", function () {
+  const phone = controller(true);
+  phone.run("onOrientation({beta: 0, gamma: -60}); calibrate(); for (let i = 0; i < 10; i++) onOrientation({beta: 20, gamma: -60})");
+  const before = phone.run("input.steer");
+  phone.run("window.innerHeight = 390; recenterControlFrame()");
+  assert.equal(phone.run("input.steer"), before);
 });

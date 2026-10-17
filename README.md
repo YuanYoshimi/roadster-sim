@@ -48,7 +48,7 @@ iPhones only share tilt data with **HTTPS** pages, so the server opens a tempora
    It tries cloudflared first. If that doesn't connect within 20 s (some Wi-Fi networks block it), it switches to ngrok. To go straight to ngrok, use `npm run phone:ngrok`.
 3. Open http://localhost:3000 on the laptop. The QR code at the bottom left now shows the HTTPS phone link (it's also printed in the terminal).
 4. Scan it with the iPhone camera. If ngrok shows a warning page, tap **Visit Site**.
-5. On the phone, turn off **Portrait Orientation Lock**, hold the phone sideways, tap **Tap to start**, then tap **Allow** for motion access.
+5. On the phone, turn on **Portrait Orientation Lock** so steering cannot rotate the display. Tap **Tap to start**, then **Allow** for motion access. Hold the phone sideways; the controller supplies its own landscape view even with the OS locked in portrait. Tap **FLIP VIEW** if it looks upside down.
 6. Hold the phone the way you want "straight ahead" to feel and tap **CENTER**.
 
 The tunnel address changes each time you restart `npm run phone`, so rescan the QR code after a restart.

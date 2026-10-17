@@ -10,6 +10,8 @@ import { MSG, DRIVE_MODES, makeInput, parseMessage, socketUrl } from "./shared/p
 const input = makeInput(); // what we send
 const game = { mode: "rocket", fansOn: false, tank: 100 }; // what the game last told us
 let lastFansTap = 0;
+let layoutFlipped = false;
+let controllerFrameAngle = getScreenAngle() + getLayoutAngle();
 
 const ui = {
   startScreen: document.getElementById("startScreen"),
@@ -22,6 +24,8 @@ const ui = {
   readout: document.getElementById("readout"),
   tilt: document.getElementById("tilt"),
   tiltHelp: document.getElementById("tiltHelp"),
+  controller: document.getElementById("controller"),
+  flipView: document.getElementById("flipView"),
   speed: document.getElementById("speed"),
   tankFill: document.getElementById("tankFill"),
   fans: document.getElementById("fans"),
@@ -71,6 +75,7 @@ ui.startButton.addEventListener("click", async function () {
 // ---------- Tilt steering ----------
 
 const tilt = {
+  lastOrientation: null,
   rawSteerDeg: 0,
   rawForwardDeg: 0,
   centerSteerDeg: 0,
@@ -85,6 +90,7 @@ function onOrientation(event) {
     return; // no tilt sensor (e.g. a laptop)
   }
   tilt.eventsThisSecond = tilt.eventsThisSecond + 1;
+  tilt.lastOrientation = { beta: event.beta, gamma: event.gamma };
 
   // Work out which way is "up" (away from gravity), measured in the phone's own axes.
   const beta = degToRad(event.beta);
@@ -94,7 +100,9 @@ function onOrientation(event) {
   const upZ = Math.cos(beta) * Math.cos(gamma);
 
   // The page is sideways, so turn that into the screen's own right/up directions.
-  const screenAngle = degToRad(getScreenAngle());
+  // CSS supplies the sideways view when the OS display is locked in portrait.
+  // Include that rotation so steering uses the controller's visible right edge.
+  const screenAngle = degToRad(getScreenAngle() + getLayoutAngle());
   const screenRight = upX * Math.cos(screenAngle) - upY * Math.sin(screenAngle);
 
   // Steering = how far the phone's long edge is tilted from level. Right end down = steer right.
@@ -175,6 +183,36 @@ function getScreenAngle() {
   return 0;
 }
 
+function getLayoutAngle() {
+  let angle = window.innerHeight > window.innerWidth ? 90 : 0;
+  if (layoutFlipped) angle = angle + 180;
+  return angle;
+}
+
+function recenterControlFrame() {
+  const angle = getScreenAngle() + getLayoutAngle();
+  if (angle === controllerFrameAngle) return; // browser toolbars can resize without rotation
+  controllerFrameAngle = angle;
+  if (tilt.lastOrientation) {
+    onOrientation(tilt.lastOrientation);
+    calibrate();
+  }
+}
+
+ui.flipView.addEventListener("click", function () {
+  layoutFlipped = !layoutFlipped;
+  ui.controller.classList.toggle("flipped", layoutFlipped);
+  recenterControlFrame();
+  ui.flipView.blur();
+});
+window.addEventListener("resize", recenterControlFrame);
+
+// Pointer coordinates are in the browser's axes, even when CSS rotates the yoke.
+function pointerAcrossYoke(event) {
+  const angle = degToRad(getLayoutAngle());
+  return event.clientX * Math.cos(angle) + event.clientY * Math.sin(angle);
+}
+
 // ---------- Drag the yoke to steer (backup when tilt doesn't work) ----------
 
 const drag = { active: false, pointerId: null, startX: 0 };
@@ -184,7 +222,7 @@ ui.yokeArea.addEventListener("pointerdown", function (event) {
   ui.yokeArea.setPointerCapture(event.pointerId);
   drag.active = true;
   drag.pointerId = event.pointerId;
-  drag.startX = event.clientX;
+  drag.startX = pointerAcrossYoke(event);
 });
 ui.yokeArea.addEventListener("pointermove", function (event) {
   if (!drag.active || event.pointerId !== drag.pointerId) {
@@ -192,7 +230,7 @@ ui.yokeArea.addEventListener("pointermove", function (event) {
   }
   // Dragging half the yoke's width = full steering.
   const halfWidth = ui.yokeArea.clientWidth / 2;
-  input.steer = clamp((event.clientX - drag.startX) / halfWidth, -1, 1);
+  input.steer = clamp((pointerAcrossYoke(event) - drag.startX) / halfWidth, -1, 1);
   showSteering(input.steer * 90);
 });
 function endDrag(event) {
