@@ -154,6 +154,12 @@ function checkTiltIsWorking() {
     ui.tilt.textContent = "tilt: no data";
     ui.tilt.classList.remove("ok");
     ui.tiltHelp.style.display = "block";
+    if (!window.isSecureContext) {
+      ui.tilt.textContent = "tilt: HTTPS required";
+      ui.tiltHelp.textContent = "Tilt is blocked on this HTTP connection. Open the HTTPS phone link from the game's QR code. Drag the yoke to steer meanwhile.";
+    } else {
+      ui.tiltHelp.textContent = "No motion readings yet. Reload, tap Start, then Allow motion access. Drag the yoke to steer meanwhile.";
+    }
   }
   tilt.eventsThisSecond = 0;
 }
