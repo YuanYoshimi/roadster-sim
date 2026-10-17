@@ -45,19 +45,23 @@ export class RaceEngineer {
         <button type="button" class="voice-toggle" aria-pressed="false">Voice off</button></div>
       <p class="engineer-tip" aria-live="polite">Drive to receive coaching.</p>
       <div class="engineer-status" role="status">Waiting for driving data</div>
+      <p class="engineer-question" hidden></p>
       <form><input aria-label="Question for your engineer" placeholder="Ask your engineer…" maxlength="400"><button>Ask</button></form>
-      <button type="button" class="engineer-talk">Hold to talk · V</button>
-      <small class="speech-note">Voice questions use your browser’s speech service.</small>`;
+      <button type="button" class="engineer-talk" aria-pressed="false">Talk to engineer</button>
+      <small class="speech-note">Click to start/finish, or hold V. Uses your browser’s speech service.</small>`;
     document.body.appendChild(this.panel);
     this.language = this.panel.querySelector("select");
     this.language.value = CONFIG.coach.language;
     this.tip = this.panel.querySelector(".engineer-tip");
     this.status = this.panel.querySelector(".engineer-status");
     this.mood = this.panel.querySelector(".engineer-mood");
+    this.questionText = this.panel.querySelector(".engineer-question");
+    this.talk = this.panel.querySelector(".engineer-talk");
     this.input = this.panel.querySelector("input");
     this.input.maxLength = CONFIG.coach.maxQuestionLength;
     this.voice = new EngineerVoice(this.ask.bind(this), this.setStatus.bind(this));
     const toggle = this.panel.querySelector(".voice-toggle");
+    this.voiceToggle = toggle;
     toggle.addEventListener("click", function () {
       const enabled = this.voice.setEnabled(!this.voice.enabled);
       toggle.textContent = enabled ? "Voice on" : "Voice off";
@@ -74,21 +78,22 @@ export class RaceEngineer {
       this.lastTip = "";
       this.language.blur();
     }.bind(this));
-    const talk = this.panel.querySelector(".engineer-talk");
+    const talk = this.talk;
     if (!this.voice.recognition) {
       talk.disabled = true;
       talk.textContent = "Voice input unavailable — type above";
     }
-    talk.addEventListener("pointerdown", function (event) {
-      if (event.button !== 0) return;
-      talk.setPointerCapture(event.pointerId);
-      this.voice.startListening(this.language.value);
+    talk.addEventListener("click", function () {
+      if (this.voice.listening) this.voice.stopListening();
+      else this.startConversation();
+      talk.blur();
     }.bind(this));
-    talk.addEventListener("pointerup", function () { this.voice.stopListening(); talk.blur(); }.bind(this));
-    talk.addEventListener("pointercancel", function () { this.voice.stopListening(true); }.bind(this));
+    talk.addEventListener("keydown", function (event) {
+      if (event.code === "Space" || event.code === "Enter") event.stopPropagation();
+    });
     window.addEventListener("keydown", function (event) {
       if (event.code !== CONFIG.coach.pushToTalkKey || event.repeat || event.target.closest("input, select, textarea")) return;
-      if (!this.paused) this.voice.startListening(this.language.value);
+      if (!this.paused) this.startConversation();
     }.bind(this));
     window.addEventListener("keyup", function (event) {
       if (event.code === CONFIG.coach.pushToTalkKey) this.voice.stopListening();
@@ -100,6 +105,19 @@ export class RaceEngineer {
 
   setStatus(text) {
     this.status.textContent = text;
+    this.refreshFace();
+  }
+
+  startConversation() {
+    if (this.paused || !this.state) {
+      this.setStatus("Choose Free drive before talking to your engineer.");
+      return;
+    }
+    // Starting a conversation also enables the engineer's spoken reply.
+    const enabled = this.voice.setEnabled(true);
+    this.voiceToggle.textContent = enabled ? "Voice on" : "Voice off";
+    this.voiceToggle.setAttribute("aria-pressed", String(enabled));
+    this.voice.startListening(this.language.value);
     this.refreshFace();
   }
 
@@ -118,6 +136,10 @@ export class RaceEngineer {
     }
     this.panel.dataset.expression = expression;
     this.mood.textContent = label;
+    if (this.voice?.recognition) {
+      this.talk.textContent = this.voice.stopping ? "Sending question…" : this.voice.listening ? "Finish talking" : "Talk to engineer";
+      this.talk.setAttribute("aria-pressed", String(this.voice.listening));
+    }
   }
 
   invalidate() {
@@ -139,6 +161,7 @@ export class RaceEngineer {
     this.lastTip = "";
     this.needsLapFeedback = false;
     this.tip.textContent = "Drive to receive coaching.";
+    this.questionText.hidden = true;
     this.setStatus("Waiting for driving data");
   }
 
@@ -168,6 +191,7 @@ export class RaceEngineer {
     this.refreshFace();
     if (paused) return;
     for (const event of state.events || []) this.events.add(event);
+    if (this.voice.listening) return;
     if (this.controller) return;
     if (this.queuedQuestion) {
       const question = this.queuedQuestion;
@@ -188,6 +212,8 @@ export class RaceEngineer {
     }
     this.input.value = "";
     this.input.blur();
+    this.questionText.textContent = "You: “" + question + "”";
+    this.questionText.hidden = false;
     if (this.controller) {
       this.queuedQuestion = question;
       this.setStatus("Question queued; waiting for the current reply.");

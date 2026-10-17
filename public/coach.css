@@ -18,6 +18,8 @@
 #engineer form { display: flex; gap: 8px; }
 #engineer input { flex: 1; min-width: 0; }
 #engineer .engineer-talk { margin-top: 8px; }
+#engineer .engineer-talk[aria-pressed="true"] { background: #89dce4; color: #10212a; border-color: #89dce4; }
+.engineer-question { color: var(--muted, #abb5c4); font-size: 12px; line-height: 1.4; margin: 8px 0; }
 .speech-note { display: block; color: var(--muted, #abb5c4); margin-top: 6px; }
 body.atTitle #engineer { display: none; }
 body.touring #engineer { bottom: 175px; max-height: calc(100dvh - 190px); }

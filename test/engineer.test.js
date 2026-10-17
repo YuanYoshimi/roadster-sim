@@ -95,3 +95,43 @@ test("critical driving events can interrupt routine speech without waiting for A
   assert.match(instantCallout(["crash"], "ja").text, /衝突/);
   assert.equal(instantCallout(["landing"], "en"), null);
 });
+
+test("microphone captures one question, waits for final transcription, and cancels safely", function () {
+  let recognition;
+  const questions = [];
+  const statuses = [];
+  class Recognition {
+    constructor() { recognition = this; this.stops = 0; }
+    start() {}
+    stop() { this.stops++; }
+    abort() {}
+  }
+  globalThis.window = { SpeechRecognition: Recognition, speechSynthesis: { cancel: function () {} } };
+  try {
+    const voice = new EngineerVoice(function (text) { questions.push(text); }, function (text) { statuses.push(text); });
+    voice.setEnabled(true);
+    assert.equal(voice.startListening("en"), true);
+    assert.equal(recognition.lang, "en-US");
+    voice.stopListening();
+    voice.stopListening();
+    assert.equal(recognition.stops, 1);
+    assert.equal(voice.stopping, true);
+    const result = [{ transcript: "How should I take this corner?" }];
+    result.isFinal = true;
+    recognition.onresult({ resultIndex: 0, results: [result] });
+    recognition.onend();
+    assert.deepEqual(questions, ["How should I take this corner?"]);
+    assert.equal(voice.listening, false);
+    assert.equal(voice.stopping, false);
+    voice.startListening("ja");
+    voice.setEnabled(false);
+    recognition.onresult({ resultIndex: 0, results: [result] });
+    recognition.onend();
+    assert.equal(questions.length, 1, "turning voice off must discard late microphone results");
+    voice.startListening("en");
+    recognition.onerror({ error: "not-allowed" });
+    recognition.onend();
+    assert.equal(questions.length, 1);
+    assert.match(statuses.at(-1), /not-allowed/);
+  } finally { delete globalThis.window; }
+});
