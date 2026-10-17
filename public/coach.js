@@ -1,4 +1,5 @@
 // Owner: friend — live state adapter, AI coach UI, and Yuan's lap-summary hook.
+import { LiveDrivingCoach } from "./shared/live-coaching.js";
 import { CONFIG } from "./config.js";
 import { PRACTICE_GOALS, cleanPracticeGoal, inferPracticeGoal } from "./shared/practice-goal.js";
 import { focusText, outcomeText } from "./shared/coaching-text.js";
@@ -12,6 +13,9 @@ function memoryId() {
 
 export class RaceEngineer {
   constructor(options = {}) {
+    this.liveCoach = new LiveDrivingCoach();
+    this.lastLiveTipAt = -Infinity;
+    this.pendingLiveTip = null;
     this.dataset = options.dataset === "demo" ? "demo" : "live";
     this.driverId = memoryId();
     try {
@@ -321,6 +325,9 @@ export class RaceEngineer {
   }
 
   reset() {
+    this.liveCoach.reset();
+    this.lastLiveTipAt = -Infinity;
+    this.pendingLiveTip = null;
     this.invalidate();
     this.history = [];
     this.lapMeasurements = [];
@@ -463,6 +470,10 @@ export class RaceEngineer {
 
   addLapSummary(detail) {
     const lap = typeof detail === "string" ? { id: memoryId(), summary: detail, corners: [] } : detail;
+    if (this.dataset === "live" && lap?.source && lap.source !== "live") {
+      this.setStatus("Ignored replay/example data in live driving.");
+      return;
+    }
     if (!lap || typeof lap.summary !== "string" || !lap.summary.trim()) return;
     this.lapMeasurements.push(structuredClone(lap));
     this.lapMeasurements = this.lapMeasurements.slice(-CONFIG.coach.maxHistory);
@@ -480,7 +491,7 @@ export class RaceEngineer {
     } else this.needsLapFeedback = true;
   }
 
-  update(state, throttle, paused = false) {
+  update(state, throttle, paused = false, liveSample = null) {
     if (this.state && this.state.mode !== state.mode) {
       this.invalidate();
       this.history = [];
@@ -507,6 +518,18 @@ export class RaceEngineer {
       this.setStatus("Instant callout · driving event");
       this.voice.queue(callout, true);
     }
+    if (this.dataset === "live" && !paused && !this.voice.listening && liveSample && Date.now()-liveSample.timestampMs<CONFIG.liveCoaching.maximumAgeMs) {
+      const liveTip=this.liveCoach.update(liveSample,this.language.value);
+      if(liveTip) this.pendingLiveTip=liveTip;
+      if(this.pendingLiveTip && Date.now()-this.pendingLiveTip.capturedAt>CONFIG.liveCoaching.maximumAgeMs) this.pendingLiveTip=null;
+      if(this.pendingLiveTip && !callout && !this.voice.current?.urgent && !this.queuedQuestion && !this.controller && !this.planBusy && !this.voice.acknowledgment) {
+        this.tip.textContent=this.pendingLiveTip.text;
+        this.setStatus("Live telemetry · just measured · no AI credits");
+        this.voice.queue(this.pendingLiveTip,this.pendingLiveTip.kind === "off_track");
+        this.pendingLiveTip=null;
+        this.lastLiveTipAt=performance.now();
+      }
+    }
     this.voice.update(state, throttle, paused);
     this.refreshFace();
     if (paused) return;
@@ -522,7 +545,7 @@ export class RaceEngineer {
       const question = this.queuedQuestion;
       this.queuedQuestion = "";
       this.request(question);
-    } else if (this.autoTips.checked && (this.needsLapFeedback || performance.now() - this.lastRequest >= CONFIG.coach.intervalMs)) {
+    } else if (this.autoTips.checked && performance.now()-this.lastLiveTipAt>=CONFIG.coach.intervalMs && (this.needsLapFeedback || performance.now() - this.lastRequest >= CONFIG.coach.intervalMs)) {
       this.needsLapFeedback = false;
       this.request();
     }

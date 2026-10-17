@@ -8,6 +8,8 @@
 
 ## Current status (update as you go)
 
+- **Scope:** Tesla Roadster browser simulator only. Do not build Assetto Corsa readers/adapters or Python racing-sim infrastructure. The earlier race-engineer prompt provides feature ideas, not a second target platform.
+
 - **Oct 17 ownership update:** The user confirmed Yuan delegated milestones 1–2 as well. The friend now handles browser telemetry/logger, lap/corner analysis, AI engineer and voice (milestones 1–4 adapted to this JavaScript simulator). `race-session.js` and shared `LapAnalyzer` produce real `race:lap-summary` events; CSV replay uses the same pipeline. See `docs/coach-integration.md`. Historical notes below describe the earlier ownership split.
 
 - **Looks pass (Oct 16 evening):** **real Suzuka** (`levels/suzuka.json`, built by `tools/build-suzuka.mjs` from OpenStreetMap + NASA SRTM heights: 5.8 km, real elevation, crossover bridge) with terrain shaped around the track, a **speed-adaptive racing line** (G), and circuit dressing for every `track` (curbs only in corners, gravel traps that slow you, guardrails, pit lane, grandstands with a crowd, woods, horizon hills). Physically based sky, photo textures (Poly Haven CC0), rounded traffic cars. Top speed is now per trim (210 / 230 / 233 mph). The stunt camera that swung out while flying was removed (the user didn't like it). Attribution for OSM/SRTM/Poly Haven is in the README "Credits" section; keep it.

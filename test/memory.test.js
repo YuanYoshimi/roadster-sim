@@ -27,10 +27,10 @@ test("idempotent lap keys isolate driver, track, mode and synthetic examples", a
     calls.push({ query, parameters, options });
     return { records: [] };
   });
-  const lap = cleanLap({ ...MEMORY_DEMO_LAPS[0], summary: "Text ' is a parameter" });
+  const lap = cleanLap({ ...MEMORY_DEMO_LAPS[0], source: "live", summary: "Text ' is a parameter" });
   await memory.saveLap(scope, lap);
   await memory.saveLap(scope, lap);
-  await memory.saveLap({ ...scope, dataset: "demo" }, lap);
+  await memory.saveLap({ ...scope, dataset: "demo" }, { ...lap, source: "demo" });
   await memory.saveLap({ ...scope, mode: "rocket" }, lap);
   await memory.saveLap({ ...scope, driverId: "driver-2" }, lap);
   await memory.saveLap({ ...scope, trackId: "blank" }, lap);

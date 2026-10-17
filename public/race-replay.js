@@ -5,7 +5,7 @@ const engineer=new RaceEngineer({dataset:'demo'}),status=document.getElementById
 const play=document.getElementById('play'),stop=document.getElementById('stop');
 let samples=[],index=0,running=false,anchor=0,lastState=null,callouts=new Map();
 const laps=[];
-const analyzer=new LapAnalyzer({onLap:function(lap){laps.push(lap);engineer.addLapSummary(lap);document.getElementById('replay-laps').textContent=laps.map(function(l){return l.summary;}).join('\n\n');}});
+const analyzer=new LapAnalyzer({onLap:function(lap){laps.push(lap);engineer.addLapSummary({...lap,source:"replay"});document.getElementById('replay-laps').textContent=laps.map(function(l){return l.summary;}).join('\n\n');}});
 function load(text,label) {
   try {
     const rows=parseTelemetryCsv(text);

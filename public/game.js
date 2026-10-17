@@ -364,6 +364,8 @@ function readControls() {
 let lastStateSent = 0;
 let pendingEvents = [];
 function sendStateIfDue(now) {
+  const paused = document.hidden || document.body.classList.contains("atTitle");
+  if (level) raceSession.sample(car, lastInput, level.time, paused, pendingEvents);
   if (pendingEvents.includes("crash") || pendingEvents.includes("flip")) raceSession.analyzer.invalidate("impact");
   if (now - lastStateSent < 1000 / CONFIG.network.stateRateHz) {
     return;
@@ -379,10 +381,9 @@ function sendStateIfDue(now) {
   state.altitude = Math.round(car.altitude * 10) / 10;
   state.events = pendingEvents;
   state.goalText = hud.goalText.textContent;
-  const paused = document.hidden || document.body.classList.contains("atTitle");
-  if (level) raceSession.sample(car, lastInput, level.time, paused, pendingEvents);
+  state.telemetry = raceSession.liveContext;
   state.events = pendingEvents;
-  engineer.update(state, lastInput.gas, paused);
+  engineer.update(state, lastInput.gas, paused, raceSession.latestSample);
   if (socket && socket.readyState === WebSocket.OPEN) {
     socket.send(JSON.stringify(state));
   }

@@ -1,11 +1,12 @@
 // Adapts the browser car to the same telemetry -> analysis -> engineer path used by CSV replay.
+import { liveSnapshot } from "./shared/live-coaching.js";
 import { CONFIG } from "./config.js";
 import { TrackPosition, stableId, telemetryCsv } from "./shared/race-telemetry.js";
 import { LapAnalyzer, telemetryCallouts } from "./shared/lap-analysis.js";
 export class RaceSession {
   constructor(onLap,onEvents) {
     this.onEvents=onEvents;
-    this.analyzer=new LapAnalyzer({onLap:function(lap){this.lastLap=lap;this.result.textContent=lap.summary;onLap(lap);}.bind(this),
+    this.analyzer=new LapAnalyzer({onLap:function(lap){this.lastLap=lap;this.result.textContent=lap.summary;onLap({...lap,source:"live"});}.bind(this),
       onStatus:function(text){if(text.startsWith("Lap ignored")) this.result.textContent=text; else this.status.textContent=text;}.bind(this),onMap:this.saveMap.bind(this)});
     this.element=document.createElement("details");this.element.id="race-data";
     this.element.innerHTML='<summary>Driving data · 10 Hz</summary><p class="race-data-status">Choose a circuit to analyse laps.</p><p class="race-lap-result">No clean reference lap yet.</p><p class="race-log-status">Local CSV recording ready.</p><button type="button">Download telemetry CSV</button> <a href="/race-replay.html" target="_blank">Replay a recording</a>';
@@ -30,15 +31,16 @@ export class RaceSession {
   }
   reset() {
     this.sessionId="run-"+Date.now().toString(36)+"-"+Math.random().toString(36).slice(2,8);
-    this.sequence=0;this.lastSample=-Infinity;this.analyzer.reset();this.analyzer.best.clear();this.lastLap=null;this.callouts=new Map();this.paused=true;
+    this.sequence=0;this.lastSample=-Infinity;this.analyzer.reset();this.analyzer.best.clear();this.lastLap=null;this.latestSample=null;this.liveContext=null;this.callouts=new Map();this.paused=true;
     this.result.textContent="No clean reference lap yet.";
   }
   sample(car,input,timeSeconds,paused,events=[]) {
     this.element.hidden=document.body.classList.contains("atTitle");
     if(paused) {this.analyzer.invalidate("paused");this.paused=true;return;}
     if(events.includes("crash") || events.includes("flip")) this.analyzer.invalidate("impact");
-    if(!this.projector || timeSeconds-this.lastSample<1/CONFIG.analysis.sampleRateHz) return;
-    this.lastSample=timeSeconds;this.paused=false;
+    const interval=1/CONFIG.analysis.sampleRateHz;
+    if(!this.projector || timeSeconds-this.lastSample<interval-0.000001) return;
+    this.lastSample=Number.isFinite(this.lastSample) && timeSeconds-this.lastSample<interval*2 ? this.lastSample+interval : timeSeconds;this.paused=false;
     const t=car.telemetry,w=t.wheels,position=this.projector.project(car.getPosition());
     const physicsVersion="physics-"+stableId({car:CONFIG.car,physics:CONFIG.physics,fans:CONFIG.fans,thrusters:CONFIG.thrusters,rocket:CONFIG.rocket,air:CONFIG.air,surfaces:CONFIG.surfaces});
     const sample={sessionId:this.sessionId,trackId:this.trackId,trackVersion:this.projector.version,physicsVersion:physicsVersion,
@@ -50,6 +52,8 @@ export class RaceSession {
     this.analyzer.push(sample);
     sample.lapNumber=this.analyzer.lapNumber;
     sample.lapTimeSeconds=this.analyzer.samples ? Math.max(0,timeSeconds-this.analyzer.samples[0].timeSeconds) : 0;
+    this.latestSample=sample;
+    this.liveContext=liveSnapshot(sample,Array.from(this.analyzer.reasons));
     this.rows.push(sample);if(this.rows.length>CONFIG.analysis.maximumBufferedSamples) this.rows.shift();
     if(this.queue.length<CONFIG.analysis.maximumBufferedSamples) this.queue.push(sample);
     else this.logStatus.textContent="Disk logger backlog full · download the local CSV.";

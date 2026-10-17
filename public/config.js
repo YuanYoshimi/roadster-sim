@@ -4,6 +4,14 @@
 // Numbers marked "reveal" are Tesla's claims from the Oct 15, 2026 event (not verified).
 
 export const CONFIG = {
+  liveCoaching: {
+    intervalSeconds: 8,
+    minimumSpeedKmh: 15,
+    minimumTurnSeconds: 0.8,
+    exitSettleSeconds: 0.4,
+    overlapThreshold: 0.3,
+    maximumAgeMs: 5000,
+  },
   analysis: {
     sampleRateHz: 10,
     logBatchSamples: 20,
