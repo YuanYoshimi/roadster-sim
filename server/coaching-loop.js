@@ -72,4 +72,3 @@ export function evaluateFocus(focus, lap) {
     metricChangeMeters: metricChangeMeters, errorReductionMeters: errorReductionMeters, lossChangeSeconds: lossChangeSeconds,
     result: result, causalClaim: false };
 }
-
