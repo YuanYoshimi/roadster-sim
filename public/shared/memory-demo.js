@@ -9,3 +9,11 @@ export const MEMORY_DEMO_LAPS = [
 export const MEMORY_DEMO_NEXT_LAP = { valid: true, comparison: comparison, id: "example-lap-4", lapNumber: 4,
   summary: "EXAMPLE lap 4: T4 lost 0.04 s; braked 2 m early. Same reference and conditions.",
   corners: [{ name: "T4", timeLostSeconds: 0.04, brakedEarlyMeters: 2, minimumSpeedDifferenceKmh: -1 }] };
+
+// A separate, labeled fixture for a measured earlier-braking cue expressed in seconds.
+export const LATE_BRAKING_DEMO_LAPS = MEMORY_DEMO_LAPS.map(function (lap, index) {
+  return { ...lap, id: "late-braking-example-" + (index + 1),
+    comparison: { ...lap.comparison, referenceId: "late-braking-example-reference" },
+    summary: "EXAMPLE: T4 braking 12 m / 0.6 s later than reference; minimum speed 6 km/h lower; 0.35 s lost.",
+    corners: [{ name: "T4", timeLostSeconds: 0.35, brakedEarlyMeters: -12, brakedEarlySeconds: -0.6, minimumSpeedDifferenceKmh: -6 }] };
+});

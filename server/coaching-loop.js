@@ -1,4 +1,5 @@
 // Measured coaching decisions stay deterministic; the LLM explains this evidence.
+import { cleanPracticeGoal, ruleMatchesGoal } from "../public/shared/practice-goal.js";
 import { CONFIG } from "../public/config.js";
 
 function rounded(value) { return Math.round(value * 1000) / 1000; }
@@ -8,21 +9,25 @@ export function comparisonKey(comparison) {
   return JSON.stringify([comparison.referenceId, comparison.trackVersion, comparison.physicsVersion, comparison.setupId]);
 }
 
-export function chooseFocus(laps, pending = null) {
+export function chooseFocus(laps, pending = null, rawGoal) {
+  const goal = cleanPracticeGoal(rawGoal);
   const latest = laps[0];
-  if (pending) return { ...pending, comparableNow: Boolean(latest?.valid && latest.comparisonKey === pending.comparisonKey) };
+  if (pending && (pending.goalType || "general") === goal.type && (pending.goalCorner || "") === goal.corner) return { ...pending, comparableNow: Boolean(latest?.valid && latest.comparisonKey === pending.comparisonKey) };
   // Never silently compare old summaries or laps without declared conditions.
   if (!latest?.valid || !latest.comparisonKey) return null;
   const comparable = laps.filter(function (lap) { return lap.valid && lap.comparisonKey === latest.comparisonKey; });
   const candidates = [];
   for (const corner of latest.corners || []) {
+    if (goal.corner && corner.name !== goal.corner) continue;
     for (const rule of CONFIG.coachingLoop.rules) {
+      if (!ruleMatchesGoal(rule.metric, goal)) continue;
+      const sign = rule.direction || 1;
       if (!(corner.timeLostSeconds >= CONFIG.coachingLoop.minimumLossSeconds) ||
-          !(corner[rule.metric] >= rule.minimumErrorMeters)) continue;
+          !(corner[rule.metric] * sign >= rule.minimumErrorMeters)) continue;
       const evidence = [];
       for (const lap of comparable) {
         const attempt = lap.corners?.find(function (item) { return item.name === corner.name; });
-        if (attempt?.timeLostSeconds >= CONFIG.coachingLoop.minimumLossSeconds && attempt[rule.metric] >= rule.minimumErrorMeters) {
+        if (attempt?.timeLostSeconds >= CONFIG.coachingLoop.minimumLossSeconds && attempt[rule.metric] * sign >= rule.minimumErrorMeters) {
           evidence.push({ lapId: lap.id, timeLostSeconds: attempt.timeLostSeconds, metricValue: attempt[rule.metric] });
         }
       }
@@ -31,11 +36,17 @@ export function chooseFocus(laps, pending = null) {
       for (const item of evidence) totalLoss += item.timeLostSeconds;
       const meanLoss = totalLoss / evidence.length;
       const coverage = evidence.length / comparable.length;
-      candidates.push({ id: latest.id + ":focus:" + corner.name + ":" + rule.metric,
+      candidates.push({ id: latest.id + ":focus:" + corner.name + ":" + rule.metric + ":" + goal.type + ":" + (goal.corner || "all"),
         status: "candidate", corner: corner.name, metric: rule.metric,
+        goalType: goal.type, goalCorner: goal.corner,
+        actionDirection: rule.metric === "brakedEarlyMeters" && sign > 0 ? "later" : "earlier",
+        minimumSpeedDifferenceKmh: corner.minimumSpeedDifferenceKmh ?? null,
+        baselineTimeDifferenceSeconds: corner.brakedEarlySeconds ?? null,
+        actionSeconds: rule.metric === "brakedEarlyMeters" && corner.brakedEarlySeconds * sign > 0 ?
+          rounded(Math.min(CONFIG.coachingLoop.maximumStepSeconds, Math.abs(corner.brakedEarlySeconds) / 2)) : null,
         comparisonKey: latest.comparisonKey, baselineLapId: latest.id,
         baselineMetric: corner[rule.metric], baselineLossSeconds: corner.timeLostSeconds,
-        actionMeters: rounded(Math.min(rule.maximumStepMeters, corner[rule.metric] / 2)),
+        actionMeters: rounded(Math.min(rule.maximumStepMeters, Math.abs(corner[rule.metric]) / 2)),
         evidenceLapIds: evidence.map(function (item) { return item.lapId; }), evidence: evidence,
         meanLossSeconds: rounded(meanLoss), priorityScore: rounded(meanLoss * coverage),
         confidence: evidence.length >= CONFIG.coachingLoop.strongEvidenceAttempts && coverage === 1 ? "strong" : "moderate",
@@ -70,5 +81,5 @@ export function evaluateFocus(focus, lap) {
     baselineMetric: focus.baselineMetric, observedMetric: corner[focus.metric],
     baselineLossSeconds: focus.baselineLossSeconds, observedLossSeconds: corner.timeLostSeconds,
     metricChangeMeters: metricChangeMeters, errorReductionMeters: errorReductionMeters, lossChangeSeconds: lossChangeSeconds,
-    result: result, causalClaim: false };
+    goalType: focus.goalType || "general", goalCorner: focus.goalCorner || "", result: result, causalClaim: false };
 }

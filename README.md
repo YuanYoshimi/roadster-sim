@@ -148,3 +148,7 @@ The memory now links one repeated measured issue to a bounded coaching cue and t
 ### Camera views
 
 In Free drive, use **Camera view** in the upper-right panel to choose Chase, Cockpit, Overhead or the existing Showroom orbit. **C** cycles the same views. Your selection is remembered in this browser; returning to the title screen temporarily uses the showroom camera and restores your selected driving view when you resume.
+
+### Goal-based engineer practice
+
+Tell the engineer “I want to work on corner speed at T4”, or choose a Practice goal. It selects one measured experiment and shows the supporting lap count, speed/offset differences and time loss. Goal plans and updates after measured laps use no AI credits; follow-up questions can use ai&. Exact seconds-based braking cues require the optional measured braking-time offset from analysis. Try **Load local goal examples** on `/coach-lab.html` for a labeled demonstration; real driving still needs Yuan's structured corner-analysis events.

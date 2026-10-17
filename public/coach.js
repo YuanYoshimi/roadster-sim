@@ -1,5 +1,6 @@
 // Owner: friend — live state adapter, AI coach UI, and Yuan's lap-summary hook.
 import { CONFIG } from "./config.js";
+import { PRACTICE_GOALS, cleanPracticeGoal, inferPracticeGoal } from "./shared/practice-goal.js";
 import { focusText, outcomeText } from "./shared/coaching-text.js";
 import { EngineerVoice, instantCallout } from "./voice.js";
 
@@ -29,11 +30,17 @@ export class RaceEngineer {
     this.enabled = false;
     this.state = null;
     this.history = [];
+    this.lapMeasurements = [];
+    this.conversation = [];
+    this.practiceGoal = cleanPracticeGoal();
+    this.planBusy = false;
+    this.pendingGoalPlan = false;
     this.events = new Set();
     this.previousEvents = new Set();
     this.lastRequest = -Infinity;
     this.controller = null;
     this.generation = 0;
+    this.lapGeneration = 0;
     this.paused = true;
     this.lastTip = "";
     this.queuedQuestion = "";
@@ -71,6 +78,16 @@ export class RaceEngineer {
         <select class="engineer-voice" aria-label="Speaking voice"><option value="">Device default</option></select>
       </label>
       <button type="button" class="voice-preview">Preview voice · free</button>
+      <label class="engineer-voice-label">Practice goal
+        <select class="practice-goal" aria-label="Practice goal">
+          <option value="general">Overall driving</option>
+          <option value="corner_speed">Corner speed</option>
+          <option value="braking">Braking</option>
+          <option value="corner_exit">Corner exit / throttle</option>
+        </select>
+      </label>
+      <small class="practice-label">Set a goal by typing or talking, e.g. “I want to work on corner speed.”</small>
+      <p class="practice-evidence"></p>
       <label class="engineer-auto"><input type="checkbox"> Automatic tips (uses AI credits)</label>
       <p class="engineer-tip" aria-live="polite">Drive to receive coaching.</p>
       <div class="engineer-status" role="status">Waiting for driving data</div>
@@ -91,6 +108,14 @@ export class RaceEngineer {
     document.body.appendChild(this.panel);
     this.language = this.panel.querySelector("select");
     this.language.value = CONFIG.coach.language;
+    this.practiceSelect = this.panel.querySelector(".practice-goal");
+    this.practiceLabel = this.panel.querySelector(".practice-label");
+    this.practiceEvidence = this.panel.querySelector(".practice-evidence");
+    this.practiceSelect.value = this.practiceGoal.type;
+    this.practiceSelect.addEventListener("change", function () {
+      this.setPracticeGoal({ type: this.practiceSelect.value, corner: "" });
+      this.practiceSelect.blur();
+    }.bind(this));
     this.tip = this.panel.querySelector(".engineer-tip");
     this.status = this.panel.querySelector(".engineer-status");
     this.memoryStatus = this.panel.querySelector(".engineer-memory");
@@ -211,6 +236,7 @@ export class RaceEngineer {
     this.lastRequest = -Infinity;
     this.lastTip = "";
     if (!enabled) {
+      this.pendingGoalPlan = false;
       this.voice.setEnabled(false);
       this.voiceToggle.textContent = "Voice off";
       this.voiceToggle.setAttribute("aria-pressed", "false");
@@ -226,6 +252,7 @@ export class RaceEngineer {
     this.input.disabled = !enabled;
     this.sendButton.disabled = !enabled;
     this.autoTips.disabled = !enabled;
+    this.practiceSelect.disabled = !enabled;
     this.focusButton.disabled = !enabled;
     this.coachingPanel.hidden = !enabled || (!this.currentFocus && !this.currentOutcome);
     this.setStatus(enabled ? "Ask a question, or enable automatic tips." : "Off · no AI requests");
@@ -275,10 +302,13 @@ export class RaceEngineer {
     }
   }
 
-  invalidate() {
+  invalidate(preserveLapWrites = false) {
     this.generation++;
-    for (const controller of this.memoryControllers) controller.abort();
-    this.memoryControllers.clear();
+    if (!preserveLapWrites) {
+      this.lapGeneration++;
+      for (const controller of this.memoryControllers) controller.abort();
+      this.memoryControllers.clear();
+    }
     if (this.controller) this.controller.abort();
     this.controller = null;
     this.voice.clear();
@@ -289,6 +319,9 @@ export class RaceEngineer {
   reset() {
     this.invalidate();
     this.history = [];
+    this.lapMeasurements = [];
+    this.conversation = [];
+    this.practiceEvidence.textContent = "";
     this.currentFocus = null;
     this.currentOutcome = null;
     this.coachingPanel.hidden = true;
@@ -318,6 +351,7 @@ export class RaceEngineer {
     this.memoryStatus.textContent = "Neo4j memory: " + (labels[result.status] || result.status);
     if (result.data?.recentLaps) result = { ...result, laps: result.data.recentLaps.length };
     if (result.laps !== undefined) this.memoryStatus.textContent += " · " + result.laps + " past laps recalled";
+    if (result.data?.practice && result.status !== "connected") this.memoryStatus.textContent += " · using this tab’s measured laps";
     if (result.data?.reason === "lap_id_conflict") this.memoryStatus.textContent = "Lap ID already used; corrected analysis needs a new ID.";
     if (this.dataset === "demo") this.memoryStatus.textContent += " · examples only";
   }
@@ -335,6 +369,7 @@ export class RaceEngineer {
       if (generation === this.generation) {
         this.showMemory(result);
         if (this.enabled && result.data && ("focus" in result.data || "outcome" in result.data)) this.showCoaching(result.data);
+        if (this.enabled && result.data?.practice) this.showPractice(result.data.practice);
       }
       return result;
     } catch {
@@ -363,16 +398,46 @@ export class RaceEngineer {
     }
   }
 
-  async loadMeasuredFocus() {
+  showPractice(report) {
+    this.practiceLabel.textContent = "Working on: " + report.label + " · feedback after measured laps · no AI credits";
+    this.practiceEvidence.textContent = report.evidence.join(" ");
+  }
+
+  setPracticeGoal(goal) {
     if (!this.enabled) return;
+    this.invalidate(true); // changing the practice question must not discard pending measured laps
+    this.practiceGoal = cleanPracticeGoal(goal);
+    this.practiceSelect.value = this.practiceGoal.type;
+    this.currentFocus = null;
+    this.currentOutcome = null;
+    this.coachingPanel.hidden = true;
+    this.practiceEvidence.textContent = "";
+    this.practiceLabel.textContent = "Working on: " + PRACTICE_GOALS[this.practiceGoal.type] + (this.practiceGoal.corner ? " · " + this.practiceGoal.corner : "");
+    this.pendingGoalPlan = true;
+    this.loadMeasuredFocus();
+  }
+
+  async loadMeasuredFocus() {
+    if (!this.enabled || this.planBusy) return;
+    this.planBusy = true;
+    this.pendingGoalPlan = false;
     const generation = this.generation;
-    await this.pendingLapWrite;
-    if (!this.enabled || generation !== this.generation) return;
-    const result = await this.memoryRequest("/api/memory/focus", { enabled: true, scope: this.memoryScope() });
-    if (result?.status === "connected" && !result.data?.focus && !result.data?.outcome && generation === this.generation) {
-      this.setStatus("Need at least two valid comparable laps with a repeated measured issue.");
+    try {
+      await this.pendingLapWrite;
+      if (!this.enabled || generation !== this.generation) return;
+      const result = await this.memoryRequest("/api/memory/focus", { enabled: true, scope: this.memoryScope(),
+        practiceGoal: this.practiceGoal, laps: this.lapMeasurements });
+      if (generation === this.generation && result?.data?.practice) {
+        this.tip.textContent = result.data.practice.text;
+        this.setStatus("Practice plan · no AI credits");
+        const text = result.data.focus ? focusText(result.data.focus, this.language.value, this.dataset) : result.data.practice.text;
+        if (text !== this.lastTip) { this.voice.queue({ text: text, lang: this.language.value }); this.lastTip = text; }
+      }
+      return result;
+    } finally {
+      this.planBusy = false;
+      if (this.enabled && this.pendingGoalPlan) this.loadMeasuredFocus();
     }
-    return result;
   }
 
   async loadDemoNextLap() {
@@ -395,13 +460,16 @@ export class RaceEngineer {
   addLapSummary(detail) {
     const lap = typeof detail === "string" ? { id: memoryId(), summary: detail, corners: [] } : detail;
     if (!lap || typeof lap.summary !== "string" || !lap.summary.trim()) return;
+    this.lapMeasurements.push(structuredClone(lap));
+    this.lapMeasurements = this.lapMeasurements.slice(-CONFIG.coach.maxHistory);
     this.history.push(lap.summary.trim().slice(0, CONFIG.coach.maxSummaryLength));
     this.history = this.history.slice(-CONFIG.coach.maxHistory);
     if (this.enabled) {
       const generation = this.generation;
+      const lapGeneration = this.lapGeneration;
       const scope = this.memoryScope();
       this.pendingLapWrite = this.pendingLapWrite.then(async function () {
-        if (!this.enabled || generation !== this.generation) return;
+        if (!this.enabled || lapGeneration !== this.lapGeneration) return;
         const result = await this.memoryRequest("/api/memory/laps", { enabled: true, scope: scope, lap: lap });
         if (generation === this.generation && result?.data?.stored !== false) this.needsLapFeedback = true;
       }.bind(this));
@@ -412,6 +480,9 @@ export class RaceEngineer {
     if (this.state && this.state.mode !== state.mode) {
       this.invalidate();
       this.history = [];
+      this.lapMeasurements = [];
+      this.conversation = [];
+      this.practiceEvidence.textContent = "";
       this.currentFocus = null;
       this.currentOutcome = null;
       this.coachingPanel.hidden = true;
@@ -437,7 +508,12 @@ export class RaceEngineer {
     if (paused) return;
     for (const event of state.events || []) this.events.add(event);
     if (this.voice.listening) return;
-    if (this.controller) return;
+    if (this.controller || this.planBusy) return;
+    if (this.needsLapFeedback && this.practiceGoal.type !== "general") {
+      this.needsLapFeedback = false;
+      this.loadMeasuredFocus();
+      return;
+    }
     if (this.queuedQuestion) {
       const question = this.queuedQuestion;
       this.queuedQuestion = "";
@@ -452,6 +528,15 @@ export class RaceEngineer {
     if (!this.enabled) return;
     question = question.trim().slice(0, CONFIG.coach.maxQuestionLength);
     if (!question) return;
+    const goal = inferPracticeGoal(question);
+    if (goal) {
+      this.input.value = "";
+      this.input.blur();
+      this.questionText.textContent = "You: “" + question + "”";
+      this.questionText.hidden = false;
+      this.setPracticeGoal(goal);
+      return;
+    }
     if (!this.state || this.paused) {
       this.setStatus("Start driving before asking your engineer.");
       return;
@@ -483,6 +568,7 @@ export class RaceEngineer {
       const response = await fetch("/api/coach", {
         method: "POST", headers: { "Content-Type": "application/json" }, signal: controller.signal,
         body: JSON.stringify({ enabled: true, state: state, lang: lang, history: this.history, question: question,
+          practiceGoal: this.practiceGoal, laps: this.lapMeasurements, conversation: this.conversation,
           memory: { enabled: true, scope: this.memoryScope() } }),
       });
       if (!response.ok) throw new Error("coach_unavailable");
@@ -491,6 +577,11 @@ export class RaceEngineer {
       if (typeof tip.text !== "string" || !tip.text) throw new Error("empty_tip");
       if (tip.memory) this.showMemory(tip.memory);
       if (tip.coaching) this.showCoaching(tip.coaching);
+      if (tip.practice) this.showPractice(tip.practice);
+      if (question && tip.source === "ai") {
+        this.conversation.push({ question: question, answer: tip.text });
+        this.conversation = this.conversation.slice(-CONFIG.coach.conversationTurns);
+      }
       this.tip.textContent = tip.text;
       if (tip.source === "analysis") this.setStatus("Measured coaching · no AI credits");
       else if (tip.source === "ai") this.setStatus("ai& · " + tip.latencyMs + " ms");

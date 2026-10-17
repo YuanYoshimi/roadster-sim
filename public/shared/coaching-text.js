@@ -2,8 +2,10 @@
 export function focusText(focus, lang = "en", dataset = "live") {
   const example = dataset === "demo" ? (lang === "ja" ? "例のデータ: " : "Example data: ") : "";
   if (focus.metric === "brakedEarlyMeters") {
-    return example + (lang === "ja" ? focus.corner + "では次の有効な周回でブレーキを" + focus.actionMeters + "m遅らせて比較しましょう。" :
-      "At " + focus.corner + ", try braking " + focus.actionMeters + " m later on the next valid lap, then compare.");
+    const amount = focus.actionSeconds > 0 ? focus.actionSeconds + " s" : focus.actionMeters + " m";
+    const direction = focus.actionDirection || "later";
+    return example + (lang === "ja" ? focus.corner + "では次の有効な周回でブレーキ位置を" + amount + (direction === "later" ? "遅らせて" : "早めて") + "比較しましょう。" :
+      "At " + focus.corner + ", try braking " + amount + " " + direction + " on the next valid lap, then compare.");
   }
   return example + (lang === "ja" ? focus.corner + "では次の有効な周回でアクセル開始を" + focus.actionMeters + "m早めて比較しましょう。" :
     "At " + focus.corner + ", try picking up throttle " + focus.actionMeters + " m earlier on the next valid lap, then compare.");

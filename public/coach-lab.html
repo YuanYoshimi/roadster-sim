@@ -23,6 +23,8 @@
     <button data-sample="lowAir">Low air</button>
     <button id="lap">Send example lap summary</button>
   </div>
+  <button id="local-goal-demo">Load local goal examples · no AI credits</button>
+  <p>For goal coaching: load local examples, then type “I want to work on corner speed at T4”. These examples include measured braking-time offsets.</p>
   <button id="memory-demo">Load 3 example laps into Neo4j · no AI credits</button>
   <button id="memory-next">Send next comparable example lap · no AI credits</button>
   <p>Memory loop: turn engineer on → load examples → click Measured focus → send next example lap. Leave automatic tips off.</p>
@@ -31,6 +33,7 @@
   <details><summary>Inspect sample driving state</summary><pre id="state"></pre></details>
   <script type="module">
     import { RaceEngineer } from "./coach.js";
+    import { LATE_BRAKING_DEMO_LAPS } from "./shared/memory-demo.js";
     import { SAMPLE_STATE } from "./shared/protocol.js";
     const engineer = new RaceEngineer({ dataset: "demo" });
     engineer.setTrack("suzuka.json");
@@ -48,6 +51,14 @@
         "Next attempt evaluated. Read the comparison in the engineer panel." :
         "No eligible outcome yet. Show a measured focus before sending the next example lap.";
       if (result?.data?.stored) document.getElementById("memory-next").disabled = true;
+    };
+    document.getElementById("local-goal-demo").onclick = function () {
+      if (!engineer.enabled) {
+        document.getElementById("memory-result").textContent = "Turn the engineer on first.";
+        return;
+      }
+      for (const lap of LATE_BRAKING_DEMO_LAPS) engineer.addLapSummary(lap);
+      document.getElementById("memory-result").textContent = "Three labeled local examples loaded. Ask to work on corner speed at T4. Automatic paid tips can stay off.";
     };
     const samples = {
       straight: { ...SAMPLE_STATE, steer: 0, fansOn: true, events: [] },

@@ -2,6 +2,8 @@
 import neo4j from "neo4j-driver";
 import { randomUUID, createHash } from "node:crypto";
 import { CONFIG } from "../public/config.js";
+import { cleanPracticeGoal } from "../public/shared/practice-goal.js";
+import { practiceReport } from "./practice-report.js";
 import { chooseFocus, comparisonKey, evaluateFocus } from "./coaching-loop.js";
 import { MEMORY_DEMO_LAPS, MEMORY_DEMO_NEXT_LAP } from "../public/shared/memory-demo.js";
 
@@ -38,6 +40,7 @@ export function cleanLap(raw) {
     names.add(name);
     corners.push({ name: name, timeLostSeconds: metric(corner.timeLostSeconds, -600, 600),
       brakedEarlyMeters: metric(corner.brakedEarlyMeters, -1000, 1000),
+      brakedEarlySeconds: metric(corner.brakedEarlySeconds, -30, 30),
       minimumSpeedDifferenceKmh: metric(corner.minimumSpeedDifferenceKmh, -500, 500),
       throttlePickupLateMeters: metric(corner.throttlePickupLateMeters, -1000, 1000),
       observedAt: metric(corner.observedAt, 0, Date.now() + CONFIG.coachingLoop.clockSkewMs) });
@@ -83,6 +86,28 @@ export function summarizeMemory(laps, advice, dataset) {
   recurringCorners.sort(function (a, b) { return b.totalLossSeconds - a.totalLossSeconds; });
   return { dataset: dataset, recentLaps: laps.slice(0, CONFIG.memory.historyLimit),
     recurringCorners: recurringCorners.slice(0, 3), previousAdvice: advice.slice(0, CONFIG.memory.adviceLimit) };
+}
+
+function lapHash(lap) {
+  // Keep legacy retry hashes stable when optional new measurements are absent.
+  const payload = { ...lap, corners: lap.corners.map(function (corner) {
+    const item = { ...corner };
+    if (item.brakedEarlySeconds == null) delete item.brakedEarlySeconds;
+    return item;
+  }) };
+  return createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+}
+
+export async function resolvePracticeContext(memory, scope, rawGoal, laps = []) {
+  const goal = cleanPracticeGoal(rawGoal);
+  const result = memory ? await memory.context(scope, goal) : { status: "not_configured" };
+  if (result.status === "connected") return result;
+  // Browser history is validated measurements, never inferred from prose summaries.
+  const recent = laps.slice(-CONFIG.memory.historyLimit).reverse();
+  const data = summarizeMemory(recent, [], scope.dataset);
+  data.coaching = { focus: chooseFocus(recent, null, goal), outcome: null };
+  data.practice = practiceReport(goal, data.coaching, recent, scope.dataset);
+  return { status: result.status, data: data };
 }
 
 export class RaceMemory {
@@ -166,13 +191,14 @@ export class RaceMemory {
         }
         RETURN l.id AS id`,
       { ...p, ...lap, lapKey: p.sessionKey + ":" + lap.id,
-        payloadHash: createHash("sha256").update(JSON.stringify(lap)).digest("hex"), now: Date.now() });
+        payloadHash: lapHash(lap), now: Date.now() });
       if (!saved.records.length) return { lapId: lap.id, stored: false, reason: "lap_id_conflict" };
       return { lapId: lap.id, stored: true, outcome: await this.evaluateRecommendation(scope) };
     }.bind(this));
   }
 
-  async context(scope) {
+  async context(scope, rawGoal) {
+    const goal = cleanPracticeGoal(rawGoal);
     return this.perform(async function () {
       await this.evaluateRecommendation(scope);
       const result = await this.query(`
@@ -184,7 +210,7 @@ export class RaceMemory {
           WITH l ORDER BY l.createdAt DESC, l.id DESC LIMIT $historyLimit
           OPTIONAL MATCH (l)-[:HAS_CORNER]->(a:RaceCornerAttempt)-[:AT_CORNER]->(c:RaceCorner)
           WITH l, collect(CASE WHEN c IS NOT NULL THEN {name: c.name, timeLostSeconds: a.timeLostSeconds,
-            brakedEarlyMeters: a.brakedEarlyMeters, minimumSpeedDifferenceKmh: a.minimumSpeedDifferenceKmh,
+            brakedEarlyMeters: a.brakedEarlyMeters, brakedEarlySeconds: a.brakedEarlySeconds, minimumSpeedDifferenceKmh: a.minimumSpeedDifferenceKmh,
             throttlePickupLateMeters: a.throttlePickupLateMeters, observedAt: a.observedAt} END) AS corners
           ORDER BY l.createdAt DESC, l.id DESC
           RETURN collect({id: l.id, summary: left(l.summary, $summaryChars), lapNumber: l.lapNumber,
@@ -200,7 +226,9 @@ export class RaceMemory {
       const record = result.records[0];
       const data = summarizeMemory(record ? record.get("laps") : [], record ? record.get("advice") : [], scope.dataset);
       const coaching = await this.loadCoaching(scope);
-      data.coaching = { focus: chooseFocus(data.recentLaps, coaching.focus), outcome: coaching.outcome };
+      const outcome = coaching.outcome && (coaching.outcome.goalType || "general") === goal.type && (coaching.outcome.goalCorner || "") === goal.corner ? coaching.outcome : null;
+      data.coaching = { focus: chooseFocus(data.recentLaps, coaching.focus, goal), outcome: outcome };
+      data.practice = practiceReport(goal, data.coaching, data.recentLaps, scope.dataset);
       return data;
     }.bind(this));
   }
@@ -239,6 +267,13 @@ export class RaceMemory {
         MERGE (t:RaceTrack {id: $trackKey}) SET t.name = $trackId, t.dataset = $dataset
         MERGE (s:RaceSession {id: $sessionKey}) SET s.mode = $mode, s.dataset = $dataset
         MERGE (d)-[:DROVE]->(s) MERGE (s)-[:ON_TRACK]->(t)
+        WITH s, t, d
+        OPTIONAL MATCH (d)-[:DROVE]->(oldSession:RaceSession)-[:ON_TRACK]->(t)
+        WHERE oldSession.mode = $mode
+        OPTIONAL MATCH (oldSession)-[:HAS_RECOMMENDATION]->(old:RaceRecommendation)
+        WHERE old.status IN ['pending', 'proposed'] AND old.id <> $id
+        WITH s, t, collect(DISTINCT old) AS superseded
+        FOREACH (previous IN superseded | SET previous.status = 'dismissed', previous.dismissalReason = 'focus_changed')
         WITH s, t MATCH (baseline:RaceLap {id: $baselineLapId})
         MERGE (r:RaceRecommendation {id: $id}) ON CREATE SET r += $properties
         MERGE (s)-[:HAS_RECOMMENDATION]->(r) MERGE (r)-[:BASED_ON]->(baseline)
@@ -337,13 +372,20 @@ export function installMemoryRoutes(app, memory) {
   });
   app.post("/api/memory/focus", async function (req, res) {
     if (req.body?.enabled !== true) { res.status(403).json({ error: "engineer_disabled" }); return; }
-    let scope;
-    try { scope = cleanMemoryScope(req.body.scope); }
-    catch (error) { res.status(400).json({ error: error.message }); return; }
-    const context = await memory.context(scope);
-    if (context.status !== "connected") { res.json(context); return; }
-    const prepared = await memory.prepareRecommendation(scope, context.data.coaching.focus);
-    res.json({ status: prepared.status, data: { focus: prepared.data, outcome: context.data.coaching.outcome } });
+    let scope, goal, laps;
+    try {
+      scope = cleanMemoryScope(req.body.scope);
+      goal = cleanPracticeGoal(req.body.practiceGoal);
+      if (req.body.laps !== undefined && !Array.isArray(req.body.laps)) throw new Error("Invalid lap history");
+      laps = (req.body.laps || []).slice(-CONFIG.memory.historyLimit).map(cleanLap);
+    } catch (error) { res.status(400).json({ error: error.message }); return; }
+    const context = await resolvePracticeContext(memory, scope, goal, laps);
+    let focus = context.data.coaching.focus;
+    if (context.status === "connected") {
+      const prepared = await memory.prepareRecommendation(scope, focus);
+      focus = prepared.status === "connected" ? prepared.data : null;
+    } else if (focus) focus = { ...focus, status: "local" };
+    res.json({ status: context.status, data: { focus: focus, outcome: context.data.coaching.outcome, practice: context.data.practice } });
   });
   app.post("/api/memory/focus/ack", async function (req, res) {
     if (req.body?.enabled !== true) { res.status(403).json({ error: "engineer_disabled" }); return; }

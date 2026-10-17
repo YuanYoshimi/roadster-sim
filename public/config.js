@@ -7,12 +7,14 @@ export const CONFIG = {
   coachingLoop: {
     clockSkewMs: 5000,
     minimumAttempts: 2,
+    maximumStepSeconds: 0.3,
     strongEvidenceAttempts: 3,
     minimumLossSeconds: 0.03,
     meaningfulChangeMeters: 1,
     meaningfulChangeSeconds: 0.02,
     rules: [
       { metric: "brakedEarlyMeters", minimumErrorMeters: 3, maximumStepMeters: 5 },
+      { metric: "brakedEarlyMeters", direction: -1, minimumErrorMeters: 3, maximumStepMeters: 5 },
       { metric: "throttlePickupLateMeters", minimumErrorMeters: 3, maximumStepMeters: 5 },
     ],
   },
@@ -32,6 +34,7 @@ export const CONFIG = {
     intervalMs: 8000,
     requestTimeoutMs: 3000,
     maxHistory: 5,
+    conversationTurns: 4,
     maxQuestionLength: 400,
     maxSummaryLength: 3000,
     maxResponseLength: 350,

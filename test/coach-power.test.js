@@ -147,3 +147,71 @@ test("a measured cue is acknowledged only while visible and enabled; power off a
     delete globalThis.window;
   }
 });
+
+test("asking to practice a skill sets a goal and requests a free plan without enabling automatic AI", async function () {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.document = { hidden: false, createElement: function () { return new Element(); }, body: { appendChild: function () {} } };
+  globalThis.window = { addEventListener: function () {}, speechSynthesis: { cancel: function () {}, getVoices: function () { return []; } } };
+  globalThis.fetch = async function (url, options) {
+    calls.push({ url, body: JSON.parse(options.body) });
+    return { ok: true, json: async function () { return { status: "not_configured", data: {
+      focus: null, outcome: null, practice: { label: "Corner speed · T4", evidence: [], text: "Need two comparable measured laps." }
+    } }; } };
+  };
+  try {
+    const engineer = new RaceEngineer();
+    engineer.ask("I want to work on corner speed at T4");
+    assert.equal(calls.length, 0);
+    engineer.setPower(true);
+    engineer.ask("I want to work on corner speed at T4");
+    await new Promise(setImmediate);
+    assert.deepEqual(engineer.practiceGoal, { type: "corner_speed", corner: "T4" });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url, "/api/memory/focus");
+    assert.equal(calls[0].body.practiceGoal.corner, "T4");
+    assert.equal(engineer.autoTips.checked, false);
+    assert.match(engineer.tip.textContent, /two comparable/);
+    engineer.setPower(false);
+  } finally {
+    globalThis.fetch = originalFetch;
+    delete globalThis.document;
+    delete globalThis.window;
+  }
+});
+
+test("changing the practice goal preserves in-flight measured laps and waits for them before planning", async function () {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  let finishLap, lapSignal;
+  globalThis.document = { hidden: false, createElement: function () { return new Element(); }, body: { appendChild: function () {} } };
+  globalThis.window = { addEventListener: function () {}, speechSynthesis: { cancel: function () {}, getVoices: function () { return []; } } };
+  globalThis.fetch = function (url, options) {
+    calls.push(url);
+    if (url === "/api/memory/laps") {
+      lapSignal = options.signal;
+      return new Promise(function (resolve) { finishLap = resolve; });
+    }
+    return Promise.resolve({ ok: true, json: async function () { return { status: "connected", data: {
+      focus: null, outcome: null, practice: { label: "Corner speed", evidence: [], text: "Measured plan" }
+    } }; } });
+  };
+  try {
+    const engineer = new RaceEngineer();
+    engineer.setPower(true);
+    engineer.addLapSummary({ id: "lap-1", summary: "Measured lap", corners: [] });
+    await new Promise(setImmediate);
+    engineer.ask("I want to work on corner speed");
+    assert.equal(lapSignal.aborted, false);
+    assert.deepEqual(calls, ["/api/memory/laps"]);
+    finishLap({ ok: true, json: async function () { return { status: "connected", data: { stored: true } }; } });
+    await new Promise(setImmediate);
+    assert.deepEqual(calls, ["/api/memory/laps", "/api/memory/focus"]);
+    assert.equal(engineer.tip.textContent, "Measured plan");
+    engineer.setPower(false);
+  } finally {
+    globalThis.fetch = originalFetch;
+    delete globalThis.document;
+    delete globalThis.window;
+  }
+});
