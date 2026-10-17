@@ -11,7 +11,9 @@
     "phone:ngrok": "node server.js --tunnel=ngrok",
     "memory:check": "node tools/memory.mjs check",
     "memory:demo": "node tools/memory.mjs demo",
-    "memory:loop-demo": "node tools/coaching-loop-demo.mjs"
+    "memory:loop-demo": "node tools/coaching-loop-demo.mjs",
+    "race:replay": "node tools/replay-race.mjs",
+    "race:fixture": "node tools/race-fixture.mjs"
   },
   "engines": {
     "node": ">=20.12"

@@ -46,3 +46,23 @@ body:has(#telemetry[style*="block"]) #engineer { right: 592px; }
 #engineer .practice-goal { display: block; width: 100%; margin-top: 4px; }
 .practice-label, .practice-evidence { display: block; color: var(--muted, #abb5c4); font-size: 11px; line-height: 1.45; margin: 6px 0; }
 .practice-evidence:empty { display: none; }
+
+#race-data { position: fixed; top: 224px; left: 16px; z-index: 8; width: 245px; padding: 10px 12px; border-radius: 12px; background: rgba(14,23,32,.86); color: #e7eef6; font: 12px/1.45 system-ui; }
+#race-data summary { cursor: pointer; }
+#race-data p { overflow-wrap: anywhere; }
+#race-data button, #race-data a { color: #d0f5ff; background: #253543; border: 1px solid #526779; border-radius: 6px; padding: 6px; display: inline-block; margin: 3px 0; }
+body.presenting #race-data { display: none; }
+
+#engineer .hands-free-toggle { display: block; width: 100%; margin: 8px 0 4px; min-height: 40px; border: 1px solid #89dce4; }
+#engineer .hands-free-toggle[aria-pressed="true"] { background: #89dce4; color: #10212a; }
+#engineer .hands-free-status { display: block; padding: 4px 0 8px; line-height: 1.4; }
+
+.engineer-cost { display:block; color:#abb5c4; font-size:11px; margin:5px 0 10px; }
+.engineer-settings { border-top:1px solid #405564; margin:10px 0; padding-top:8px; }
+.engineer-settings summary,.engineer-thread summary { cursor:pointer; color:#b2c7d0; font-size:12px; }
+.demo-stage { color:#89dce4; font-size:12px; }
+.demo-stage:empty { display:none; }
+.engineer-history-link { display:block; color:#89dce4; font-size:12px; margin:10px 0; }
+.engineer-thread { margin:10px 0; }
+.thread-messages { max-height:200px; overflow-y:auto; font-size:12px; line-height:1.5; }
+.thread-messages p { border-bottom:1px solid #344857; padding-bottom:8px; }

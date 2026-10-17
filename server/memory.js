@@ -46,7 +46,7 @@ export function cleanLap(raw) {
       observedAt: metric(corner.observedAt, 0, Date.now() + CONFIG.coachingLoop.clockSkewMs) });
   }
   let comparison = null;
-  if (raw.comparison !== undefined) {
+  if (raw.comparison !== undefined && raw.comparison !== null) {
     comparison = {};
     for (const field of ["referenceId", "trackVersion", "physicsVersion", "setupId"]) {
       comparison[field] = identifier(raw.comparison?.[field], field);
@@ -60,9 +60,17 @@ export function cleanLap(raw) {
         (completedAt !== null && corner.observedAt > completedAt))) throw new Error("Corner timestamp is outside the lap");
   }
   if (raw.lapNumber != null && !Number.isInteger(raw.lapNumber)) throw new Error("Invalid lap number");
-  return { id: identifier(raw.id, "lap ID"), summary: raw.summary.trim().slice(0, CONFIG.coach.maxSummaryLength),
+  if (raw.source !== undefined && !["live", "demo", "replay"].includes(raw.source)) throw new Error("Invalid lap source");
+  return { ...(raw.source ? {source: raw.source} : {}), id: identifier(raw.id, "lap ID"), summary: raw.summary.trim().slice(0, CONFIG.coach.maxSummaryLength),
     lapNumber: metric(raw.lapNumber, 1, 100000), lapTimeSeconds: metric(raw.lapTimeSeconds, 0.01, 86400), corners: corners,
     startedAt: startedAt, completedAt: completedAt, valid: raw.valid === true, comparison: comparison, comparisonKey: comparisonKey(comparison) };
+}
+
+export function cleanScopedLap(raw, scope) {
+  const lap=cleanLap(raw);
+  if (scope?.dataset === "live" && ["demo", "replay"].includes(lap.source)) throw new Error("Example/replay data cannot enter live memory");
+  if (scope?.dataset === "demo" && lap.source === "live") throw new Error("Live data cannot enter example memory");
+  return lap;
 }
 
 function keys(scope) {
@@ -100,6 +108,7 @@ function lapHash(lap) {
 
 export async function resolvePracticeContext(memory, scope, rawGoal, laps = []) {
   const goal = cleanPracticeGoal(rawGoal);
+  laps = laps.map(function(lap){return cleanScopedLap(lap,scope);});
   const result = memory ? await memory.context(scope, goal) : { status: "not_configured" };
   if (result.status === "connected") return result;
   // Browser history is validated measurements, never inferred from prose summaries.
@@ -169,6 +178,7 @@ export class RaceMemory {
   }
 
   async saveLap(scope, lap) {
+    lap = cleanScopedLap(lap, scope);
     const p = keys(scope);
     return this.perform(async function () {
       const saved = await this.query(`
@@ -178,7 +188,7 @@ export class RaceMemory {
         MERGE (d)-[:DROVE]->(s) MERGE (s)-[:ON_TRACK]->(t)
         MERGE (l:RaceLap {id: $lapKey})
         ON CREATE SET l.createdAt = $now, l.payloadHash = $payloadHash, l.summary = $summary, l.lapNumber = $lapNumber, l.lapTimeSeconds = $lapTimeSeconds, l.dataset = $dataset,
-          l.valid = $valid, l.comparisonKey = $comparisonKey, l.startedAt = $startedAt, l.completedAt = $completedAt
+          l.source = $source, l.valid = $valid, l.comparisonKey = $comparisonKey, l.startedAt = $startedAt, l.completedAt = $completedAt
         MERGE (s)-[:HAS_LAP]->(l)
         WITH l, t WHERE l.payloadHash = $payloadHash
         CALL {
@@ -190,7 +200,7 @@ export class RaceMemory {
         RETURN count(a) AS attempts
         }
         RETURN l.id AS id`,
-      { ...p, ...lap, lapKey: p.sessionKey + ":" + lap.id,
+      { ...p, ...lap, source: lap.source || scope.dataset, lapKey: p.sessionKey + ":" + lap.id,
         payloadHash: lapHash(lap), now: Date.now() });
       if (!saved.records.length) return { lapId: lap.id, stored: false, reason: "lap_id_conflict" };
       return { lapId: lap.id, stored: true, outcome: await this.evaluateRecommendation(scope) };
@@ -366,7 +376,7 @@ export function installMemoryRoutes(app, memory) {
   app.post("/api/memory/laps", async function (req, res) {
     if (req.body?.enabled !== true) { res.status(403).json({ error: "engineer_disabled" }); return; }
     let scope, lap;
-    try { scope = cleanMemoryScope(req.body.scope); lap = cleanLap(req.body.lap); }
+    try { scope = cleanMemoryScope(req.body.scope); lap = cleanScopedLap(req.body.lap, scope); }
     catch (error) { res.status(400).json({ error: error.message }); return; }
     res.json(await memory.saveLap(scope, lap));
   });
@@ -377,7 +387,7 @@ export function installMemoryRoutes(app, memory) {
       scope = cleanMemoryScope(req.body.scope);
       goal = cleanPracticeGoal(req.body.practiceGoal);
       if (req.body.laps !== undefined && !Array.isArray(req.body.laps)) throw new Error("Invalid lap history");
-      laps = (req.body.laps || []).slice(-CONFIG.memory.historyLimit).map(cleanLap);
+      laps = (req.body.laps || []).slice(-CONFIG.memory.historyLimit).map(function(lap){return cleanScopedLap(lap,scope);});
     } catch (error) { res.status(400).json({ error: error.message }); return; }
     const context = await resolvePracticeContext(memory, scope, goal, laps);
     let focus = context.data.coaching.focus;

@@ -2,3 +2,7 @@ node_modules/
 .env
 .DS_Store
 dist/
+
+# Local recorded driving sessions and learned maps
+logs/
+tracks/

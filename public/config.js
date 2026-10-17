@@ -4,6 +4,38 @@
 // Numbers marked "reveal" are Tesla's claims from the Oct 15, 2026 event (not verified).
 
 export const CONFIG = {
+  liveCoaching: {
+    intervalSeconds: 8,
+    minimumSpeedKmh: 15,
+    minimumTurnSeconds: 0.8,
+    exitSettleSeconds: 0.4,
+    overlapThreshold: 0.3,
+    maximumAgeMs: 5000,
+  },
+  analysis: {
+    sampleRateHz: 10,
+    logBatchSamples: 20,
+    maximumBufferedSamples: 36000,
+    maximumLapSamples: 18000,
+    maximumSampleGapSeconds: 0.5,
+    maximumTravelFactor: 2,
+    positionToleranceMeters: 5,
+    reverseToleranceMeters: 2,
+    trackLimitToleranceMeters: 1,
+    minimumLapSeconds: 5,
+    cornerMinimumSpeedKmh: 20,
+    cornerSteerDegrees: 3,
+    cornerLateralG: 0.35,
+    cornerMergeGapMeters: 20,
+    cornerMinimumLengthMeters: 10,
+    brakeLookbackMeters: 80,
+    cornerExitMeters: 30,
+    brakeThreshold: 0.1,
+    throttleThreshold: 0.5,
+    coldTireC: 45,
+    hotTireC: 115,
+    calloutCooldownSeconds: 30,
+  },
   coachingLoop: {
     clockSkewMs: 5000,
     minimumAttempts: 2,
@@ -32,7 +64,7 @@ export const CONFIG = {
   coach: {
     language: "en",
     intervalMs: 8000,
-    requestTimeoutMs: 3000,
+    requestTimeoutMs: 15000, // Allow the reasoning model to finish a conversational reply.
     maxHistory: 5,
     conversationTurns: 4,
     maxQuestionLength: 400,
@@ -44,8 +76,13 @@ export const CONFIG = {
     straightThrottle: 0.4,
     stoppedSpeedKmh: 5,
     tipLifetimeMs: 15000,
+    demoCueLifetimeMs: 3000,
     speechRate: 1.05,
     pushToTalkKey: "KeyV",
+    handsFreeRestartMs: 750,
+    handsFreeListenWindowMs: 3000,
+    observationLifetimeMs: 30000,
+    maximumObservations: 3,
     lowTankPercent: 15,
     cornerSpeedKmh: 70,
     cornerSteer: 0.5,
@@ -203,6 +240,10 @@ export const CONFIG = {
     steerMaxDeg: 30, // tilting the phone's long edge this far from level = full steering
     steerDeadZoneDeg: 3, // small wobbles near center are ignored
     steerSmoothing: 0.35, // 0..1, lower = smoother but slower
+    rollTiltDeg: 45, // deliberate airborne tilt beyond ordinary steering
+    rollRearmDeg: 12, // return near center before the next flip
+    rollPulseMs: 150, // several phone packets, one rising edge at the car
+    rollCooldownMs: 1200, // longer than the automatic roll
     pitchMaxDeg: 25, // tilting the phone this far forward/back = full pitch
     invertSteer: false, // flip this if steering goes the wrong way on some phone
   },

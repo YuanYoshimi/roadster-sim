@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
+import { PhoneRollGesture } from "../public/shared/phone-roll.js";
 import { CONFIG } from "../public/config.js";
 import { MSG, DRIVE_MODES, makeInput } from "../public/shared/protocol.js";
 
@@ -24,7 +25,7 @@ function controller(secure) {
   };
   const context = vm.createContext({
     document: document, window: { isSecureContext: secure, orientation: 90, innerWidth: 800, innerHeight: 400, addEventListener: function () {} },
-    CONFIG: CONFIG, MSG: MSG, DRIVE_MODES: DRIVE_MODES, makeInput: makeInput,
+    performance:{now:()=>1000},PhoneRollGesture:PhoneRollGesture, CONFIG: CONFIG, MSG: MSG, DRIVE_MODES: DRIVE_MODES, makeInput: makeInput,
   });
   const source = readFileSync(new URL("../public/phone.js", import.meta.url), "utf8");
   vm.runInContext(source.replace(/^import .*;$/gm, ""), context);
@@ -84,4 +85,32 @@ test("a toolbar resize does not silently recenter a turn", function () {
   const before = phone.run("input.steer");
   phone.run("window.innerHeight = 390; recenterControlFrame()");
   assert.equal(phone.run("input.steer"), before);
+});
+
+test("real orientation events send a single airborne roll through the existing phone protocol",function(){
+  const phone=controller(true);
+  phone.run(`var WebSocket={OPEN:1}; var sent=[]; socket={readyState:1,send(message){sent.push(JSON.parse(message));}};
+    onOrientation({beta:0,gamma:-60});calibrate();
+    handleMessage({type:MSG.STATE,mode:'rocket',fansOn:false,tankPercent:100,airborne:false,speedKmh:50,events:[],stunt:{upY:1,rolling:false}});
+    onOrientation({beta:50,gamma:-60});sendInput();`);
+  assert.equal(phone.run('sent.at(-1).roll'),0,'road steering stays steering');
+  phone.run(`handleMessage({type:MSG.STATE,mode:'rocket',fansOn:false,tankPercent:100,airborne:true,speedKmh:50,events:[],stunt:{upY:1,rolling:false}});
+    sendInput();`);
+  assert.equal(phone.run('sent.at(-1).roll'),0,'takeoff does not turn a held steering angle into a roll');
+  phone.run('onOrientation({beta:0,gamma:-60});sendInput();onOrientation({beta:50,gamma:-60});sendInput();');
+  assert.equal(phone.run('sent.at(-1).roll'),1);
+  assert.equal(phone.run('sent.at(-1).steer'),0,'a roll gesture must not also yaw sideways');
+  phone.run('performance.now=()=>1800;sendInput();');
+  assert.equal(phone.run('sent.at(-1).roll'),0,'stale sensors/game state cannot keep firing rolls');
+});
+
+test("curl inversion allows tilt rolls before leaving the surface; other trims do not",function(){
+  const phone=controller(true);
+  phone.run(`var WebSocket={OPEN:1}; var sent=[]; socket={readyState:1,send(message){sent.push(JSON.parse(message));}};
+    onOrientation({beta:0,gamma:-60});calibrate();
+    handleMessage({type:MSG.STATE,mode:'rocket',fansOn:true,tankPercent:100,airborne:false,speedKmh:10,events:[],stunt:{upY:-1,rolling:false}});
+    sendInput();onOrientation({beta:-50,gamma:-60});sendInput();`);
+  assert.equal(phone.run('sent.at(-1).roll'),-1);
+  phone.run(`handleMessage({type:MSG.STATE,mode:'performance',fansOn:true,tankPercent:100,airborne:true,speedKmh:10,events:[],stunt:{upY:1,rolling:false}});sendInput();`);
+  assert.equal(phone.run('sent.at(-1).roll'),0);
 });

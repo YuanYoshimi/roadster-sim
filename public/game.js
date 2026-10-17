@@ -13,8 +13,12 @@ import { TelemetryPanel } from "./telemetry.js";
 import { SoundEngine } from "./sound.js";
 import { Tour } from "./tour.js";
 import { RaceEngineer } from "./coach.js";
+import { RaceSession } from "./race-session.js";
 
 const engineer = new RaceEngineer();
+const raceSession = new RaceSession(function (lap) {
+  window.dispatchEvent(new CustomEvent("race:lap-summary", { detail: lap }));
+}, function (events) { pendingEvents.push(...events); });
 
 // ---------- Renderer, scene, lights ----------
 
@@ -360,6 +364,9 @@ function readControls() {
 let lastStateSent = 0;
 let pendingEvents = [];
 function sendStateIfDue(now) {
+  const paused = document.hidden || document.body.classList.contains("atTitle");
+  if (level) raceSession.sample(car, lastInput, level.time, paused, pendingEvents);
+  if (pendingEvents.includes("crash") || pendingEvents.includes("flip")) raceSession.analyzer.invalidate("impact");
   if (now - lastStateSent < 1000 / CONFIG.network.stateRateHz) {
     return;
   }
@@ -374,7 +381,14 @@ function sendStateIfDue(now) {
   state.altitude = Math.round(car.altitude * 10) / 10;
   state.events = pendingEvents;
   state.goalText = hud.goalText.textContent;
-  engineer.update(state, lastInput.gas, document.hidden || document.body.classList.contains("atTitle"));
+  state.telemetry = raceSession.liveContext;
+  const position=car.getPosition();
+  state.stunt={source:"live",trackId:engineer.trackId,capturedAt:Date.now(),
+    x:position.x,y:position.y,z:position.z,upY:car.getUp().y,
+    gas:lastInput.gas,brake:lastInput.brake,steer:lastInput.steer,thrust:lastInput.thrust,
+    lift:lastInput.lift,roll:lastInput.roll,rolling:car.rolling,airborne:car.airborne,goalDone:level?.goalState?.done===true};
+  state.events = pendingEvents;
+  engineer.update(state, lastInput.gas, paused, raceSession.latestSample);
   if (socket && socket.readyState === WebSocket.OPEN) {
     socket.send(JSON.stringify(state));
   }
@@ -444,7 +458,7 @@ let currentLevelIndex = 0;
 let level = null;
 
 async function loadLevel(index) {
-  engineer.reset();
+  engineer.reset(false);
   currentLevelIndex = index;
   const entry = levelList[index];
   engineer.setTrack(entry.file);
@@ -453,6 +467,7 @@ async function loadLevel(index) {
     removeLevel(level);
   }
   level = buildLevel(data, scene, world, RAPIER);
+  raceSession.configure(level.track, engineer.trackId);
   car.reset(level.spawn);
   snapCamera = true;
   hud.timer.textContent = "";
@@ -465,9 +480,16 @@ async function loadLevel(index) {
   showMessage(data.name, 1.8);
 }
 
+engineer.onDemoRequest=async function(trackId) {
+  const index=levelList.findIndex(entry=>entry.file===trackId);
+  if(index<0) throw new Error("unknown_demo");
+  await loadLevel(index);
+};
+
 // Put the car back at the start, and restart the level's traffic, rival and timers.
 function restartScenario() {
   engineer.reset();
+  raceSession.reset();
   car.reset();
   if (level) {
     resetLevel(level);
