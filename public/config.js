@@ -240,6 +240,10 @@ export const CONFIG = {
     steerMaxDeg: 30, // tilting the phone's long edge this far from level = full steering
     steerDeadZoneDeg: 3, // small wobbles near center are ignored
     steerSmoothing: 0.35, // 0..1, lower = smoother but slower
+    rollTiltDeg: 45, // deliberate airborne tilt beyond ordinary steering
+    rollRearmDeg: 12, // return near center before the next flip
+    rollPulseMs: 150, // several phone packets, one rising edge at the car
+    rollCooldownMs: 1200, // longer than the automatic roll
     pitchMaxDeg: 25, // tilting the phone this far forward/back = full pitch
     invertSteer: false, // flip this if steering goes the wrong way on some phone
   },

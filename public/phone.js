@@ -4,11 +4,15 @@
 // the LIFT thrusters (Rocket mode). If tilt doesn't work, drag the yoke on screen instead.
 // Sends the controls to the server about 30 times per second; the server passes them to the game.
 
+import { PhoneRollGesture } from "./shared/phone-roll.js";
 import { CONFIG } from "./config.js";
 import { MSG, DRIVE_MODES, makeInput, parseMessage, socketUrl } from "./shared/protocol.js";
 
 const input = makeInput(); // what we send
-const game = { mode: "rocket", fansOn: false, tank: 100 }; // what the game last told us
+const game = { mode: "rocket", fansOn: false, tank: 100, airborne:false, upY:1, rolling:false, receivedAt:-Infinity }; // what the game last told us
+const rollGesture=new PhoneRollGesture(CONFIG.phone);
+let steeringDegrees=0;
+let buttonRoll=0;
 let lastFansTap = 0;
 let layoutFlipped = false;
 let controllerFrameAngle = getScreenAngle() + getLayoutAngle();
@@ -26,6 +30,7 @@ const ui = {
   tiltHelp: document.getElementById("tiltHelp"),
   controller: document.getElementById("controller"),
   flipView: document.getElementById("flipView"),
+  rollHint: document.getElementById("rollHint"),
   speed: document.getElementById("speed"),
   tankFill: document.getElementById("tankFill"),
   fans: document.getElementById("fans"),
@@ -91,6 +96,7 @@ function onOrientation(event) {
   }
   tilt.eventsThisSecond = tilt.eventsThisSecond + 1;
   tilt.lastOrientation = { beta: event.beta, gamma: event.gamma };
+  tilt.receivedAt=performance.now();
 
   // Work out which way is "up" (away from gravity), measured in the phone's own axes.
   const beta = degToRad(event.beta);
@@ -120,6 +126,7 @@ function updateSteering() {
     steerDeg = -steerDeg;
   }
 
+  steeringDegrees=steerDeg;
   // Ignore tiny wobbles near the center, then scale so steerMaxDeg = full lock.
   let target = 0;
   if (Math.abs(steerDeg) > settings.steerDeadZoneDeg) {
@@ -145,6 +152,7 @@ function showSteering(degrees) {
 }
 
 function calibrate() {
+  rollGesture.reset();
   tilt.centerSteerDeg = tilt.rawSteerDeg;
   tilt.centerForwardDeg = tilt.rawForwardDeg;
   tilt.smoothSteer = 0;
@@ -317,16 +325,16 @@ holdButton(ui.lift, function (down) {
 holdButton(
   ui.roll,
   function (down) {
-    if (down && input.roll === 0) {
+    if (down && buttonRoll === 0) {
       buzz();
       if (input.steer < -0.15) {
-        input.roll = -1;
+        buttonRoll = -1;
       } else {
-        input.roll = 1;
+        buttonRoll = 1;
       }
     }
     if (!down) {
-      input.roll = 0;
+      buttonRoll = 0;
     }
   },
   150
@@ -407,6 +415,10 @@ function handleMessage(msg) {
     game.fansOn = msg.fansOn;
     game.mode = msg.mode;
     game.tank = msg.tankPercent;
+    game.airborne=msg.airborne===true;
+    game.upY=Number.isFinite(msg.stunt?.upY)?msg.stunt.upY:1;
+    game.rolling=msg.stunt?.rolling===true;
+    game.receivedAt=performance.now();
     // Follow the game's fan state (it may have been switched with the keyboard),
     // but not right after a tap, while our change is still on its way.
     if (performance.now() - lastFansTap > 800) {
@@ -423,7 +435,14 @@ function handleMessage(msg) {
 }
 
 function sendInput() {
-  send(input);
+  const now=performance.now();
+  const fresh=now-game.receivedAt<CONFIG.phone.timeoutMs;
+  const eligible=fresh && game.mode==="rocket" && game.tank>0 && (game.airborne || game.upY < -0.5) && !drag.active && now-(tilt.receivedAt ?? -Infinity)<CONFIG.phone.timeoutMs;
+  const gesture=rollGesture.update(steeringDegrees,eligible,game.rolling,now);
+  input.roll=buttonRoll || gesture;
+  ui.rollHint.textContent=!fresh ? "Tilt flips: waiting for game" : game.mode!=="rocket" ? "Tilt flips need Rocket mode" : game.rolling ? "Rolling · return phone to center" : eligible ? (rollGesture.armed ? "Tilt 45° left / right to barrel roll" : "Center phone to arm the next flip") : "In the air: tilt 45° to roll · ROLL also works on the ground";
+  // Keep a committed stunt gesture from also yawing the car sideways in flight.
+  send({...input,steer:eligible && (gesture || game.rolling || rollGesture.direction!==0 && !rollGesture.armed) ? 0 : input.steer});
 }
 
 function send(message) {
