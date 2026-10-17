@@ -9,6 +9,10 @@ import * as THREE from "three";
 import { addMesh, addFixedBoxCollider, headingToQuaternion, FlatPaint, BoxBatch, makeTextSign } from "./level-utils.js";
 import { makeCarMesh, getCarSize, CAR_COLORS } from "./vehicles.js";
 import { addMover } from "./traffic.js";
+import { surfaceMaterial, makeGroundPatch, TILE_METERS } from "./materials.js";
+import { RacingLine } from "./racing-line.js";
+import { addTrees, scatter, addFerrisWheel, addPitBuilding, addBuildings, addCityAlongRoad, addSoundWalls, addOverpass } from "./decor.js";
+import { turnRates, curbPlaces, makeTrackFinder, inRange, flatWidths, addGravelTraps, addGuardrails, addPitLane, addGrandstand, addDistantHills } from "./trackside.js";
 
 // A random number generator that gives the same numbers every time for the same seed,
 // so a level looks the same on every load.
@@ -22,13 +26,17 @@ function makeRandom(seed) {
 
 // =====================================================================================
 // Race track
-// { "type": "track", "points": [[x, z, height], ...], "width": 14, "startAt": [x, z] }
-// The points are joined into a smooth closed loop. Give some points a height to build a bridge.
+// { "type": "track", "points": [[x, z, height, bridgeLift], ...], "width": 14, "startAt": [x, z],
+//   "racingLine": true, "scenery": "suzuka" or "countryside", "barriers": true }
+// The points are joined into a smooth closed loop. On flat ground, any height makes a bridge.
+// With "ground": { "terrain": true } the heights are real elevation, the ground is shaped to match,
+// and only the 4th number (how much a point was raised) makes a bridge.
 // =====================================================================================
 
 export function buildTrack(built, prop) {
   const width = prop.width || 14;
   const half = width / 2;
+  const shoulder = 1.0; // a strip of asphalt past the white line (curbs go here in corners)
   const points = [];
   for (const p of prop.points) {
     points.push(new THREE.Vector3(p[0], p[2] || 0, p[1]));
@@ -36,6 +44,7 @@ export function buildTrack(built, prop) {
   const curve = new THREE.CatmullRomCurve3(points, true, "centripetal");
   const count = Math.ceil(curve.getLength() / 2); // one sample every ~2 m
   const centers = curve.getSpacedPoints(count); // count + 1 points; the last equals the first
+  const terrain = built.level.ground && built.level.ground.terrain === true;
 
   // For every sample: the center, the direction of travel, and the left/right edges.
   const samples = [];
@@ -45,12 +54,18 @@ export function buildTrack(built, prop) {
     const right = new THREE.Vector3(-flat.z, 0, flat.x); // facing +Z, right is -X
     const center = centers[i].clone();
     center.y = Math.max(0, center.y) + 0.04; // a hair above the ground
+    // How high this bit of road is above the ground under it (bridges need walls and pillars).
+    let raised = center.y;
+    if (terrain) {
+      raised = liftAt(prop.points, curve.getUtoTmapping(i / count));
+    }
     samples.push({
       center: center,
+      raised: raised,
       forward: flat,
       right: right,
-      left: center.clone().addScaledVector(right, -half),
-      rightEdge: center.clone().addScaledVector(right, half),
+      left: center.clone().addScaledVector(right, -(half + shoulder)),
+      rightEdge: center.clone().addScaledVector(right, half + shoulder),
       heading: THREE.MathUtils.radToDeg(Math.atan2(flat.x, flat.z)),
     });
   }
@@ -70,15 +85,35 @@ export function buildTrack(built, prop) {
   const vertexArray = new Float32Array(vertices);
   const collider = built.RAPIER.ColliderDesc.trimesh(vertexArray, new Uint32Array(triangles)).setFriction(1.0);
   built.fixedColliders.push(built.world.createCollider(collider));
+  // Texture coordinates in meters: across the road, and distance along it.
+  const uvs = [];
+  let distance = 0;
+  for (let i = 0; i <= count; i++) {
+    if (i > 0) {
+      distance = distance + samples[i].center.distanceTo(samples[i - 1].center);
+    }
+    const along = distance / TILE_METERS.asphalt;
+    uvs.push(0, along, (width + 2 * shoulder) / TILE_METERS.asphalt, along);
+  }
   const roadGeometry = new THREE.BufferGeometry();
   roadGeometry.setAttribute("position", new THREE.BufferAttribute(vertexArray, 3));
+  roadGeometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
   roadGeometry.setIndex(triangles);
   roadGeometry.computeVertexNormals();
-  const road = new THREE.Mesh(roadGeometry, new THREE.MeshStandardMaterial({ color: "#34383e", roughness: 0.9, side: THREE.DoubleSide }));
+  const roadMaterial = surfaceMaterial("asphalt").clone(); // seen from below on bridges too
+  roadMaterial.side = THREE.DoubleSide;
+  // Always drawn over the ground just under it, even far away (where the depth buffer can't
+  // tell 4 cm apart). Paint and curbs use a bigger offset, so they still go on top.
+  roadMaterial.polygonOffset = true;
+  roadMaterial.polygonOffsetFactor = -1;
+  roadMaterial.polygonOffsetUnits = -1;
+  const road = new THREE.Mesh(roadGeometry, roadMaterial);
   road.receiveShadow = true;
   addMesh(built, road);
 
-  // ----- Paint: white edge lines, and red/white curbs on the ground-level parts -----
+  // ----- Paint: white edge lines, and red/white curbs in the corners -----
+  const rates = turnRates(samples, count);
+  const curbs = curbPlaces(rates);
   const paint = new FlatPaint();
   for (let i = 0; i < count; i++) {
     const s = samples[i];
@@ -91,15 +126,15 @@ export function buildTrack(built, prop) {
       const d = next.center.clone().addScaledVector(next.right, side * (half - 0.4));
       liftPoints([a, b, c, d], 0.01);
       paint.addQuad(a, b, c, d, "#f2f2f2");
-      // Curb just outside the edge, alternating red and white every 4 m (ground level only).
-      if (s.center.y < 0.5 && next.center.y < 0.5) {
+      // Curb just outside the edge in corners, alternating red and white every 2 m.
+      if (curbs[i] > 0 && s.raised < 0.5 && next.raised < 0.5) {
         const e = s.center.clone().addScaledVector(s.right, side * half);
-        const f = s.center.clone().addScaledVector(s.right, side * (half + 1.0));
-        const g = next.center.clone().addScaledVector(next.right, side * (half + 1.0));
+        const f = s.center.clone().addScaledVector(s.right, side * (half + shoulder));
+        const g = next.center.clone().addScaledVector(next.right, side * (half + shoulder));
         const h = next.center.clone().addScaledVector(next.right, side * half);
-        liftPoints([e, f, g, h], 0.0);
+        liftPoints([e, f, g, h], 0.01);
         let curbColor = "#d63a3a";
-        if (Math.floor(i / 2) % 2 === 0) {
+        if (i % 2 === 0) {
           curbColor = "#f2f2f2";
         }
         paint.addQuad(e, f, g, h, curbColor);
@@ -113,7 +148,7 @@ export function buildTrack(built, prop) {
   for (let i = 0; i < count; i++) {
     const s = samples[i];
     const next = samples[i + 1];
-    if (s.center.y < 0.8 && next.center.y < 0.8) {
+    if (s.raised < 0.8 && next.raised < 0.8) {
       continue;
     }
     const length = s.center.distanceTo(next.center) + 0.2;
@@ -127,14 +162,14 @@ export function buildTrack(built, prop) {
   // Pillars every ~14 m under the bridge, but never on the road that passes underneath.
   for (let i = 0; i < count; i = i + 7) {
     const s = samples[i];
-    if (s.center.y < 2.5) {
+    if (s.raised < 2.5) {
       continue;
     }
     let blocksRoad = false;
     for (const other of samples) {
       const dx = other.center.x - s.center.x;
       const dz = other.center.z - s.center.z;
-      if (other.center.y < 1.5 && Math.sqrt(dx * dx + dz * dz) < half + 4) {
+      if (other.raised < 1.5 && Math.sqrt(dx * dx + dz * dz) < half + 4) {
         blocksRoad = true;
         break;
       }
@@ -142,9 +177,10 @@ export function buildTrack(built, prop) {
     if (blocksRoad) {
       continue;
     }
-    const height = s.center.y - 0.3;
-    walls.addCylinder(s.center.x, height / 2, s.center.z, 0.9, height, "#9da3ab");
-    const pillar = built.RAPIER.ColliderDesc.cylinder(height / 2, 0.9).setTranslation(s.center.x, height / 2, s.center.z);
+    const height = s.raised - 0.3;
+    const base = s.center.y - s.raised;
+    walls.addCylinder(s.center.x, base + height / 2, s.center.z, 0.9, height, "#9da3ab");
+    const pillar = built.RAPIER.ColliderDesc.cylinder(height / 2, 0.9).setTranslation(s.center.x, base + height / 2, s.center.z);
     built.fixedColliders.push(built.world.createCollider(pillar));
   }
   const wallMesh = walls.build();
@@ -192,8 +228,330 @@ export function buildTrack(built, prop) {
     z: spawnSample.center.z,
     heading: spawnSample.heading,
   };
-  built.track = { samples: samples, count: count, width: width, checkpoints: checkpoints, arch: arch };
+  const finder = makeTrackFinder(samples, count);
+  built.track = { samples: samples, count: count, width: width, shoulder: shoulder, finder: finder, checkpoints: checkpoints, arch: arch };
+
+  let straight = null;
+  if (prop.scenery === "suzuka") {
+    straight = mainStraightLayout(built.track, startIndex);
+  }
+  if (terrain) {
+    // Keep the ground flat beside the track: run-off, gravel, and room for the pits and stands.
+    const flat = flatWidths(built.track, rates, function (i, side) {
+      if (straight && straight.needsRoom(i, side)) {
+        return half + shoulder + 45;
+      }
+      return 0;
+    });
+    buildTerrain(built, samples, count, width, finder, flat);
+  }
+  // The exact height of the ground anywhere (flat ground is at 0).
+  const groundAt = built.groundAt || built.heightAt;
+  let skipRails = null;
+  if (straight) {
+    skipRails = dressMainStraight(built, straight, groundAt);
+  }
+  if (prop.barriers !== false) {
+    built.gravelCollider = addGravelTraps(built, built.track, rates, groundAt);
+    addGuardrails(built, built.track, rates, groundAt, skipRails);
+  }
+  if (prop.racingLine) {
+    built.racingLine = new RacingLine(built.scene, samples, count, width);
+    built.meshes.push(built.racingLine.mesh);
+  }
+  if (prop.scenery === "suzuka") {
+    dressSuzuka(built, samples, count, width, startIndex);
+  } else if (prop.scenery === "countryside") {
+    const size = built.level.ground.size || 1000;
+    addCountryside(built, samples, count, { reach: size / 2 - 100, hillsAt: size / 2 - 60, tallSideDeg: 90 });
+  }
   placeArch(built, 0);
+}
+
+// How much of the track's height at curve position t (0..1) is bridge (4th number in each point).
+function liftAt(points, t) {
+  const position = t * points.length;
+  const a = Math.floor(position) % points.length;
+  const b = (a + 1) % points.length;
+  const f = position - Math.floor(position);
+  const liftA = points[a][3] || 0;
+  const liftB = points[b][3] || 0;
+  return liftA + (liftB - liftA) * f;
+}
+
+// Hilly ground shaped around the track: near the road it sits just below the asphalt, farther away
+// it blends between the heights of the nearby parts of the track. One trimesh for physics.
+// flat[side][i]: how far from the center line the ground stays flat (see flatWidths).
+function buildTerrain(built, samples, count, width, finder, flat) {
+  const size = built.level.ground.size || 3000;
+  const cells = 340; // ~9 m grid
+  const half = width / 2;
+  // A thinned-out list of track points with the natural ground height (bridges taken off),
+  // used to blend the hills between parts of the track.
+  const guide = [];
+  for (let i = 0; i < count; i = i + 5) {
+    const s = samples[i];
+    guide.push({ x: s.center.x, z: s.center.z, h: s.center.y - s.raised - 0.04 });
+  }
+  function notBridge(i) {
+    return samples[i].raised <= 1.5; // bridges don't hold the ground up
+  }
+  function heightAt(x, z) {
+    let total = 0;
+    let weights = 0;
+    for (const g of guide) {
+      const dx = g.x - x;
+      const dz = g.z - z;
+      const d2 = dx * dx + dz * dz;
+      const w = 1 / ((d2 + 900) * (d2 + 900));
+      total = total + g.h * w;
+      weights = weights + w;
+    }
+    let h = total / weights;
+    // Never above the road nearby: just under the asphalt out to the edge of the run-off,
+    // then sloping up gently.
+    const road = finder.nearest(x, z, notBridge);
+    if (road.index >= 0) {
+      const s = samples[road.index];
+      let side = 1;
+      if ((x - s.center.x) * s.right.x + (z - s.center.z) * s.right.z < 0) {
+        side = -1;
+      }
+      const away = Math.max(0, road.distance - flat[side][road.index]);
+      const cap = s.center.y - 0.04 - 0.25 + away * 0.3;
+      if (h > cap) {
+        h = cap;
+      }
+    }
+    return h;
+  }
+  const geometry = new THREE.PlaneGeometry(size, size, cells, cells);
+  geometry.rotateX(-Math.PI / 2);
+  const position = geometry.attributes.position;
+  for (let i = 0; i < position.count; i++) {
+    position.setY(i, heightAt(position.getX(i), position.getZ(i)));
+  }
+  geometry.computeVertexNormals();
+  const uv = geometry.attributes.uv;
+  for (let i = 0; i < uv.count; i++) {
+    uv.setXY(i, (uv.getX(i) * size) / TILE_METERS.grass, (uv.getY(i) * size) / TILE_METERS.grass);
+  }
+  const mesh = new THREE.Mesh(geometry, surfaceMaterial("grass"));
+  mesh.receiveShadow = true;
+  addMesh(built, mesh);
+  const collider = built.RAPIER.ColliderDesc.trimesh(new Float32Array(position.array), new Uint32Array(geometry.index.array)).setFriction(1.0);
+  built.groundCollider = built.world.createCollider(collider);
+  built.fixedColliders.push(built.groundCollider);
+  built.grassGround = true;
+
+  // The exact height of the ground's triangles anywhere (what the car actually drives on).
+  // Grid point (ix, iz) is at x = -size/2 + ix * step, z = -size/2 + iz * step. Each grid cell
+  // is two triangles split along the diagonal from (ix, iz + 1) to (ix + 1, iz).
+  const step = size / cells;
+  const row = cells + 1;
+  built.groundAt = function (x, z) {
+    const gx = THREE.MathUtils.clamp((x + size / 2) / step, 0, cells - 0.0001);
+    const gz = THREE.MathUtils.clamp((z + size / 2) / step, 0, cells - 0.0001);
+    const ix = Math.floor(gx);
+    const iz = Math.floor(gz);
+    const fx = gx - ix;
+    const fz = gz - iz;
+    const a = position.getY(iz * row + ix);
+    const b = position.getY((iz + 1) * row + ix);
+    const c = position.getY((iz + 1) * row + ix + 1);
+    const d = position.getY(iz * row + ix + 1);
+    if (fx + fz <= 1) {
+      return a + (d - a) * fx + (b - a) * fz;
+    }
+    return c + (b - c) * (1 - fx) + (d - c) * (1 - fz);
+  };
+  built.heightAt = built.groundAt;
+
+  // The road's edges, dropping a little into the ground, so there's never a gap under the asphalt.
+  const edges = [];
+  const edgeIndices = [];
+  for (let i = 0; i <= count; i++) {
+    const s = samples[i];
+    for (const side of [-1, 1]) {
+      const edge = s.center.clone().addScaledVector(s.right, side * (half + built.track.shoulder));
+      edges.push(edge.x, edge.y - 0.02, edge.z, edge.x, edge.y - 0.9, edge.z);
+    }
+  }
+  for (let i = 0; i < count; i++) {
+    for (let side = 0; side < 2; side++) {
+      const a = i * 4 + side * 2;
+      const b = (i + 1) * 4 + side * 2;
+      edgeIndices.push(a, b, a + 1, a + 1, b, b + 1);
+    }
+  }
+  const edgeGeometry = new THREE.BufferGeometry();
+  edgeGeometry.setAttribute("position", new THREE.Float32BufferAttribute(edges, 3));
+  edgeGeometry.setIndex(edgeIndices);
+  edgeGeometry.computeVertexNormals();
+  addMesh(built, new THREE.Mesh(edgeGeometry, new THREE.MeshStandardMaterial({ color: 0x3d4033, roughness: 1, side: THREE.DoubleSide })));
+}
+
+// Which side of sample i is the inside of the circuit (+1 = its right, -1 = its left)?
+function insideSide(samples, count, i) {
+  let cx = 0;
+  let cz = 0;
+  for (let k = 0; k < count; k = k + 10) {
+    cx = cx + samples[k].center.x;
+    cz = cz + samples[k].center.z;
+  }
+  cx = cx / Math.ceil(count / 10);
+  cz = cz / Math.ceil(count / 10);
+  const towardMiddle = (cx - samples[i].center.x) * samples[i].right.x + (cz - samples[i].center.z) * samples[i].right.z;
+  if (towardMiddle < 0) {
+    return -1;
+  }
+  return 1;
+}
+
+// Where things go on Suzuka's main straight: the pit lane on the inside from 260 m before the
+// line to 300 m after it, and a 300 m grandstand opposite.
+function mainStraightLayout(track, startIndex) {
+  const count = track.count;
+  const layout = {
+    startIndex: startIndex,
+    inside: insideSide(track.samples, count, startIndex),
+    pitFrom: (startIndex - 130 + count) % count,
+    pitTo: (startIndex + 150) % count,
+    standIndex: (startIndex + 15) % count,
+  };
+  layout.standFrom = (layout.standIndex - 80 + count) % count;
+  layout.standTo = (layout.standIndex + 80) % count;
+  // Does sample i need flat ground on this side for the pits or the stands?
+  layout.needsRoom = function (i, side) {
+    if (side === layout.inside) {
+      return inRange(i, (layout.pitFrom - 10 + count) % count, (layout.pitTo + 10) % count, count);
+    }
+    return inRange(i, layout.standFrom, layout.standTo, count);
+  };
+  return layout;
+}
+
+// Suzuka's main straight: the pit lane and garages on the inside, a long grandstand opposite.
+// Returns which stretches don't need guardrails (the pit wall and the grandstand are the
+// barriers there).
+function dressMainStraight(built, layout, groundAt) {
+  const track = built.track;
+  const samples = track.samples;
+  const count = track.count;
+  const edge = track.width / 2 + track.shoulder;
+  const start = samples[layout.startIndex];
+  const inside = layout.inside;
+  const pitFrom = layout.pitFrom;
+  const pitTo = layout.pitTo;
+
+  // The pit lane, and the garages behind it (doors facing the track).
+  addPitLane(built, track, pitFrom, pitTo, inside, groundAt);
+  const pit = start.center.clone().addScaledVector(start.right, inside * (edge + 22)).addScaledVector(start.forward, 60);
+  let pitHeading = start.heading;
+  if (inside > 0) {
+    pitHeading = start.heading + 180;
+  }
+  addPitBuilding(built, pit.x, pit.z, 240, pitHeading, groundAt);
+
+  // A 300 m grandstand across the track, its seats rising away from it.
+  const s = samples[layout.standIndex];
+  const front = s.center.clone().addScaledVector(s.right, -inside * (edge + 7));
+  let standHeading = s.heading;
+  if (inside < 0) {
+    standHeading = s.heading + 180;
+  }
+  addGrandstand(built, front.x, front.z, standHeading, 300, groundAt);
+  built.landmarks = [pit, front];
+
+  return function (i, side) {
+    if (side === inside) {
+      return inRange(i, pitFrom, pitTo, count);
+    }
+    return inRange(i, layout.standFrom, layout.standTo, count);
+  };
+}
+
+// The rest of Suzuka's surroundings: the famous Ferris wheel behind the grandstand, then woods
+// and hills (taller to the north-west, like the Suzuka mountains).
+function dressSuzuka(built, samples, count, width, startIndex) {
+  const groundAt = built.groundAt || built.heightAt;
+  const start = samples[startIndex];
+  const inside = insideSide(samples, count, startIndex);
+  const wheel = start.center.clone().addScaledVector(start.right, -inside * 170).addScaledVector(start.forward, -260);
+  addFerrisWheel(built, wheel.x, wheel.z, start.heading, groundAt);
+  const landmarks = (built.landmarks || []).concat([wheel]);
+  addCountryside(built, samples, count, { reach: 1400, hillsAt: 1450, tallSideDeg: 45, landmarks: landmarks });
+}
+
+// Woods and hills around a circuit. options: reach (how far out the trees go, from the middle of
+// the circuit), hillsAt (where the hills start), tallSideDeg (which way the hills are tallest),
+// landmarks (spots to keep clear of trees).
+function addCountryside(built, samples, count, options) {
+  const groundAt = built.groundAt || built.heightAt;
+  // The middle of the circuit.
+  let cx = 0;
+  let cz = 0;
+  for (let i = 0; i < count; i = i + 10) {
+    cx = cx + samples[i].center.x;
+    cz = cz + samples[i].center.z;
+  }
+  cx = cx / Math.ceil(count / 10);
+  cz = cz / Math.ceil(count / 10);
+
+  // Woods: patches of dense forest plus trees dotted around, all kept ~40 m from the track
+  // (clear of the gravel and guardrails) and away from the landmarks.
+  const reach = options.reach;
+  const nearTrack = new Set();
+  for (let i = 0; i < count; i = i + 3) {
+    const s = samples[i];
+    for (let dx = -4; dx <= 4; dx++) {
+      for (let dz = -4; dz <= 4; dz++) {
+        nearTrack.add(Math.floor(s.center.x / 10 + dx) + "," + Math.floor(s.center.z / 10 + dz));
+      }
+    }
+  }
+  const landmarks = options.landmarks || [];
+  function keepClear(x, z) {
+    if (nearTrack.has(Math.floor(x / 10) + "," + Math.floor(z / 10))) {
+      return true;
+    }
+    if ((x - cx) * (x - cx) + (z - cz) * (z - cz) > reach * reach) {
+      return true;
+    }
+    for (const spot of landmarks) {
+      if (Math.abs(spot.x - x) < 140 && Math.abs(spot.z - z) < 140) {
+        return true;
+      }
+    }
+    return false;
+  }
+  // Fewer trees for a smaller area (the numbers are right for Suzuka's 1400 m).
+  const density = (reach * reach) / (1400 * 1400);
+  const random = makeRandom(31);
+  const dotted = scatter(Math.round(1500 * density), cx - reach, cx + reach, cz - reach, cz + reach, keepClear, 21);
+  addTrees(built, dotted, groundAt, 21, 1);
+  const forest = [];
+  const patches = Math.round(60 * density);
+  for (let patch = 0; patch < patches; patch++) {
+    const px = cx - reach + random() * 2 * reach;
+    const pz = cz - reach + random() * 2 * reach;
+    const radius = 60 + random() * 120;
+    const inPatch = scatter(60, px - radius, px + radius, pz - radius, pz + radius, function (x, z) {
+      return keepClear(x, z) || (x - px) * (x - px) + (z - pz) * (z - pz) > radius * radius;
+    }, 100 + patch);
+    for (const spot of inPatch) {
+      forest.push(spot);
+    }
+  }
+  addTrees(built, forest, groundAt, 22, 1.6);
+
+  // Hills, starting just inside the edge of the ground.
+  let base = 0;
+  for (let k = 0; k < 36; k++) {
+    const angle = (k / 36) * Math.PI * 2;
+    base = base + groundAt(cx + Math.cos(angle) * options.hillsAt, cz + Math.sin(angle) * options.hillsAt);
+  }
+  addDistantHills(built, cx, cz, options.hillsAt, base / 36, options.tallSideDeg);
 }
 
 // Move the green arch to checkpoint number k.
@@ -266,7 +624,7 @@ export function buildParkingLot(built, prop) {
 
   // ----- Ground paint: asphalt, spot lines -----
   const paint = new FlatPaint();
-  paint.add(ox, oz + lotDepth / 2, lotW + aisle * 2 + 4, lotDepth + 6, 0, "#2c3036", 0.01);
+  addMesh(built, makeGroundPatch("asphalt", ox, oz + lotDepth / 2 + 10, lotW + aisle * 2 + 10, lotDepth + 60, 0, 0.01));
   const spots = [];
   for (let p = 0; p < pairs; p++) {
     for (let row = 0; row < 2; row++) {
@@ -370,6 +728,42 @@ export function buildParkingLot(built, prop) {
   sign.rotation.y = Math.PI; // face the lot (-Z)
   addMesh(built, sign);
   addMesh(built, poles.build());
+
+  // ----- Trees around the lot, and the neighbours (other stores, offices) -----
+  const flat = function () {
+    return 0;
+  };
+  const edgeTrees = [];
+  for (let v = -20; v < lotDepth + 10; v = v + 9) {
+    for (const side of [-1, 1]) {
+      const spot = world(side * (lotW / 2 + aisle + 5), v);
+      edgeTrees.push(spot);
+    }
+  }
+  for (let u = -lotW / 2 - aisle; u < lotW / 2 + aisle; u = u + 10) {
+    edgeTrees.push(world(u, -16));
+  }
+  addTrees(built, edgeTrees, flat, 5);
+  const neighbours = [];
+  for (let i = 0; i < 10; i++) {
+    let side = 1;
+    if (i % 2 === 0) {
+      side = -1;
+    }
+    neighbours.push({
+      x: ox + side * (lotW / 2 + aisle + 45 + random() * 40),
+      z: oz + (i - 5) * 30 + random() * 10,
+      w: 25 + random() * 20,
+      d: 20 + random() * 15,
+      h: 6 + random() * 12,
+      heading: 0,
+    });
+  }
+  for (let i = 0; i < 24; i++) {
+    neighbours.push({ x: ox + (random() - 0.5) * 900, z: oz + 260 + random() * 300, w: 25 + random() * 30, d: 25 + random() * 30, h: 15 + random() * 70, heading: 0 });
+  }
+  addBuildings(built, neighbours, flat, false);
+  addDistantHills(built, 0, 0, (built.level.ground.size || 800) / 2 - 40, 0, 200);
 
   // ----- Loose shopping carts -----
   const cartCount = prop.carts || 0;
@@ -519,7 +913,7 @@ export function buildHighway(built, prop) {
 
   // ----- Road paint -----
   const paint = new FlatPaint();
-  paint.add(0, middleZ, railX * 2 + 1, length, 0, "#33373d", 0.01);
+  addMesh(built, makeGroundPatch("asphalt", 0, middleZ, railX * 2 + 1, length, 0, 0.01));
   for (const dir of [1, -1]) {
     // Solid lines at the median side and the outer edge.
     paint.add(dir * (medianHalf + 0.15), middleZ, 0.15, length, 0, "#f2f2f2", 0.02);
@@ -572,6 +966,16 @@ export function buildHighway(built, prop) {
   }
   parts.add((railX + 0.6) / 2, 7.3, end - 80, railX + 1.0, 0.4, 0.4, 0, "#8a9099");
   addMesh(built, parts.build());
+
+  // ----- Surroundings: sound walls, bridges over the road, and the city -----
+  addSoundWalls(built, railX + 1.2, start, end);
+  for (let z = start + 650; z < end - 200; z = z + 700) {
+    if (z > jamStart - 150 && z < jamEnd + 150) {
+      continue;
+    }
+    addOverpass(built, z, railX * 2 + 10);
+  }
+  addCityAlongRoad(built, start - 100, end + 100, railX + 18, prop.seed || 3);
 
   // ----- Traffic -----
   const speeds = traffic.speedsKmh || [120, 100, 80];

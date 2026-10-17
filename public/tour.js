@@ -54,11 +54,11 @@ const STEPS = [
     },
   },
   {
-    level: "circuit",
-    title: "4 / 4  ·  A lap of the figure-8",
+    level: "suzuka",
+    title: "4 / 4  ·  A lap of Suzuka",
     showTelemetry: true,
     hint: function () {
-      return "Fans on for the fast corners. The telemetry shows each tire's grip, load and temperature live.";
+      return "The real Suzuka layout. Follow the racing line: green go, yellow lift, red brake. Fans on for more grip.";
     },
     done: function (ctx) {
       return ctx.status.reached;

@@ -112,6 +112,7 @@ export class Car {
     // The game can set this to a function(collider) that returns a grip multiplier
     // for whatever a wheel is touching (for example less grip on grass).
     this.surfaceGrip = null;
+    this.surfaceDrag = null;
     this.telemetry = makeTelemetry();
 
     // Physics runs at a fixed rate, but the screen may refresh faster.
@@ -228,7 +229,8 @@ export class Car {
     if (input.gas > 0) {
       // Motors are limited by force at low speed and by power (1 MW) at high speed.
       const byPower = (c.motorPowerKW * 1000) / Math.max(Math.abs(speed), 1);
-      const nearTopSpeed = clamp((c.topSpeedKmh - this.speedKmh) / 15, 0, 1);
+      const topSpeed = c.topSpeedKmh[this.mode] || 338;
+      const nearTopSpeed = clamp((topSpeed - this.speedKmh) / 4, 0, 1);
       driveForce = input.gas * Math.min(c.maxDriveForce, byPower) * nearTopSpeed;
     }
     if (input.brake > 0) {
@@ -266,13 +268,16 @@ export class Car {
     }
 
     // ----- Aerodynamics: drag, and downforce from the body and the active rear wing -----
+    // The wing rises above 90 km/h, lies flat again near top speed for less drag,
+    // and stands up as an air brake when braking hard.
     let wingTarget = 0;
-    if (this.speedKmh > c.wingDeployKmh) {
+    const fastBraking = brakeForce > 0 && this.speedKmh > 100;
+    if ((this.speedKmh > c.wingDeployKmh && this.speedKmh < c.wingRetractKmh) || fastBraking) {
       wingTarget = 1;
     }
     this.wingDeploy = moveToward(this.wingDeploy, wingTarget, dt * 1.5);
     const halfRhoV2 = 0.5 * c.airDensity * velocity.lengthSq();
-    const dragForce = halfRhoV2 * c.dragArea;
+    const dragForce = halfRhoV2 * (c.dragArea + c.wingDragArea * this.wingDeploy);
     if (dragForce > 0.1) {
       body.addForce(velocity.clone().normalize().multiplyScalar(-dragForce), true);
     }
@@ -379,9 +384,13 @@ export class Car {
 
       // How grippy is this tire right now?
       let surface = 1;
+      let surfaceDrag = 0;
       const ground = vehicle.wheelGroundObject(i);
       if (ground && this.surfaceGrip) {
         surface = this.surfaceGrip(ground);
+      }
+      if (ground && this.surfaceDrag) {
+        surfaceDrag = this.surfaceDrag(ground) * load;
       }
       wheel.grass = surface < 1;
       const loadEffect = clamp(1 - c.tireLoadSensitivity * (load / staticLoad - 1), 0.7, 1.15);
@@ -408,7 +417,7 @@ export class Car {
       }
       // Brakes always push against the way the wheel is rolling; near zero speed they fade in
       // smoothly, so the car doesn't shudder when it stops.
-      const against = (brakeForce * brakeShare + resistForce / 4) * clamp(vx / 0.6, -1, 1);
+      const against = (brakeForce * brakeShare + resistForce / 4 + surfaceDrag) * clamp(vx / 0.6, -1, 1);
       let fx = driveForce * share - against;
       // Stopped with no pedals: hold the car still (EVs do this), even on a slope.
       if (noPedals && Math.abs(vx) < 1.5 && Math.abs(this.forwardSpeed) < 1.5) {

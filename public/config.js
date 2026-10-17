@@ -54,7 +54,9 @@ export const CONFIG = {
     maxDriveForce: 28000, // newtons at low speed (the tires limit it anyway)
     frontDriveShare: 0.33, // one of the three motors drives the front wheels
     reverseForce: 4000,
-    topSpeedKmh: 338, // reveal: 210 mph on the motors (thrusters can push past it)
+    // Reveal top speeds per trim: Performance 210 mph, Thrust 230 mph, Rocket "over 230 mph".
+    // (The thrusters can push the car past these for a moment.)
+    topSpeedKmh: { performance: 338, thrust: 370, rocket: 375 },
     maxBrakeG: 1.4, // brake request; the tires limit it (ABS)
     brakeFrontShare: 0.62,
     regenG: 0.12, // lifting off the gas slows the car (regenerative braking, like a real Tesla)
@@ -64,8 +66,10 @@ export const CONFIG = {
     airDensity: 1.2,
     dragArea: 0.6, // drag coefficient x frontal area (m^2)
     downforceArea: 1.1, // downforce coefficient x area (m^2), with the wing up
+    wingDragArea: 0.15, // the raised wing adds drag too
     aeroFrontShare: 0.45,
-    wingDeployKmh: 90, // the rear wing rises above this speed
+    wingDeployKmh: 90, // the rear wing rises above this speed...
+    wingRetractKmh: 260, // ...and lies flat again above this, for less drag at top speed (unless braking)
 
     // Steering gets smaller at high speed so the car stays drivable.
     maxSteerAngle: 0.5, // at a standstill
@@ -121,6 +125,8 @@ export const CONFIG = {
 
   surfaces: {
     grassGrip: 0.55, // grip multiplier off the track on grass (fans still help)
+    gravelGrip: 0.45, // grip multiplier in a gravel trap
+    gravelDrag: 0.5, // gravel digs into the tires: a drag force of this times the weight on each wheel (~0.5 g)
   },
 
   air: {
@@ -140,8 +146,6 @@ export const CONFIG = {
     fastFov: 78, // the camera widens with speed to feel faster
     fastFovKmh: 220,
     shakeOnThrust: 0.06,
-    stuntDistance: 18, // side camera during rolls, curls and big jumps
-    stuntHeight: 3,
   },
 
   phone: {

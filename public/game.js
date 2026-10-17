@@ -6,9 +6,9 @@ import * as THREE from "three";
 import RAPIER from "@dimforge/rapier3d-compat";
 import { CONFIG } from "./config.js";
 import { Car } from "./car.js";
-import { fetchLevelList, fetchLevel, buildLevel, stepLevel, updateLevel, resetLevel, removeLevel, isGrass } from "./levels.js";
+import { fetchLevelList, fetchLevel, buildLevel, stepLevel, updateLevel, resetLevel, removeLevel, isGrass, isGravel } from "./levels.js";
 import { MSG, DRIVE_MODES, makeInput, cleanInput, makeState, parseMessage, socketUrl } from "./shared/protocol.js";
-import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
+import { createEnvironment } from "./environment.js";
 import { TelemetryPanel } from "./telemetry.js";
 import { SoundEngine } from "./sound.js";
 import { Tour } from "./tour.js";
@@ -24,33 +24,11 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 
 const scene = new THREE.Scene();
-const SKY_TOP = new THREE.Color("#4f93dc");
-const SKY_HORIZON = new THREE.Color("#d4e6f7");
-scene.fog = new THREE.Fog(SKY_HORIZON, 180, 750);
-const sky = makeSky();
-scene.add(sky);
+const camera = new THREE.PerspectiveCamera(CONFIG.camera.baseFov, window.innerWidth / window.innerHeight, 0.1, 6000);
+// Sky with clouds, a matching sun, sky reflections and haze (environment.js).
+renderer.toneMappingExposure = 0.62;
+const environment = createEnvironment(scene, renderer);
 
-const camera = new THREE.PerspectiveCamera(CONFIG.camera.baseFov, window.innerWidth / window.innerHeight, 0.1, 2000);
-
-scene.add(new THREE.HemisphereLight(0xe8f3ff, 0x3a3f47, 0.8));
-// Reflections: a soft studio environment makes the clear-coat paint and gold glass look real.
-const environmentMaker = new THREE.PMREMGenerator(renderer);
-scene.environment = environmentMaker.fromScene(new RoomEnvironment(), 0.04).texture;
-scene.environmentIntensity = 0.55;
-const sun = new THREE.DirectionalLight(0xffffff, 2.4);
-sun.castShadow = true;
-sun.shadow.mapSize.set(2048, 2048);
-sun.shadow.camera.left = -45;
-sun.shadow.camera.right = 45;
-sun.shadow.camera.top = 45;
-sun.shadow.camera.bottom = -45;
-sun.shadow.camera.near = 1;
-sun.shadow.camera.far = 250;
-sun.shadow.bias = -0.0004;
-sun.shadow.normalBias = 0.03;
-scene.add(sun);
-scene.add(sun.target);
-const SUN_OFFSET = new THREE.Vector3(-40, 90, -30); // the sun follows the car so shadows stay sharp
 
 window.addEventListener("resize", function () {
   camera.aspect = window.innerWidth / window.innerHeight;
@@ -68,7 +46,16 @@ car.surfaceGrip = function (collider) {
   if (level && isGrass(level, collider)) {
     return CONFIG.surfaces.grassGrip;
   }
+  if (level && isGravel(level, collider)) {
+    return CONFIG.surfaces.gravelGrip;
+  }
   return 1;
+};
+car.surfaceDrag = function (collider) {
+  if (level && isGravel(level, collider)) {
+    return CONFIG.surfaces.gravelDrag;
+  }
+  return 0;
 };
 
 // ---------- HUD elements ----------
@@ -215,6 +202,11 @@ function handleKeyPress(code) {
     showTitle();
   } else if (code === "KeyN") {
     tour.next();
+  } else if (code === "KeyG") {
+    if (level && level.racingLine) {
+      level.racingLine.toggle();
+      showMessage(level.racingLine.visible ? "Racing line on" : "Racing line off", 1.2);
+    }
   } else if (code === "KeyM") {
     const muted = sound.toggleMute();
     showMessage(muted ? "Sound off" : "Sound on", 1);
@@ -495,8 +487,6 @@ const TURN_AROUND = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 const COCKPIT_TILT = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -0.08); // look slightly down
 let showroomAngle = 0.8;
-let stuntBlend = 0; // 0 = normal chase camera, 1 = side stunt camera
-const stuntSide = new THREE.Vector3(-1, 0, 0);
 
 function updateCamera(dt) {
   const carPosition = car.model.root.position;
@@ -542,25 +532,6 @@ function updateCamera(dt) {
     wantedOffset.y = height;
     const wantedLookAhead = flatForward.clone().multiplyScalar(settings.chaseLookAhead);
 
-    // Stunt camera: a camera behind the car can't show a barrel roll or the upside-down curl,
-    // so while the car is upside down, rolling or high in the air, swing out to its side.
-    const stunting = car.getUp().y < 0.4 || car.rolling || (car.airborne && car.altitude > 4);
-    if (mode === "chase" && stunting && stuntBlend < 0.05) {
-      // Pick the side once and keep it, so the camera doesn't flip across when the car turns over.
-      stuntSide.crossVectors(flatForward, WORLD_UP);
-    }
-    let stuntTarget = 0;
-    if (mode === "chase" && stunting) {
-      stuntTarget = 1;
-    }
-    stuntBlend = stuntBlend + (stuntTarget - stuntBlend) * (1 - Math.exp(-3 * dt));
-    if (stuntBlend > 0.01) {
-      const stuntOffset = stuntSide.clone().multiplyScalar(settings.stuntDistance);
-      stuntOffset.y = settings.stuntHeight;
-      wantedOffset.lerp(stuntOffset, stuntBlend);
-      wantedLookAhead.multiplyScalar(1 - stuntBlend);
-    }
-
     if (snapCamera) {
       cameraOffset.copy(wantedOffset);
       lookAheadOffset.copy(wantedLookAhead);
@@ -597,9 +568,8 @@ function updateCamera(dt) {
   }
 
   // Keep the sun's shadow box around the car, and the sky around the camera.
-  sun.position.copy(carPosition).add(SUN_OFFSET);
-  sun.target.position.copy(carPosition);
-  sky.position.copy(camera.position);
+  environment.follow(carPosition);
+  environment.sky.position.copy(camera.position);
 }
 
 // ---------- HUD ----------
@@ -706,6 +676,9 @@ function frame(now) {
     }
     hud.timer.textContent = status.line;
     tour.update(dt, { car: car, level: level, status: status });
+    if (level.racingLine) {
+      level.racingLine.update(car);
+    }
   }
 
   // Fell off the edge of the world.
@@ -724,42 +697,6 @@ function frame(now) {
   sound.update(car);
   sendStateIfDue(now);
   renderer.render(scene, camera);
-}
-
-// ---------- Sky ----------
-
-// A big sphere around the camera, colored from horizon to sky-top.
-function makeSky() {
-  const material = new THREE.ShaderMaterial({
-    side: THREE.BackSide,
-    depthWrite: false,
-    fog: false,
-    uniforms: {
-      topColor: { value: SKY_TOP },
-      horizonColor: { value: SKY_HORIZON },
-    },
-    vertexShader: `
-      varying vec3 vDirection;
-      void main() {
-        vDirection = normalize(position);
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-      }
-    `,
-    fragmentShader: `
-      uniform vec3 topColor;
-      uniform vec3 horizonColor;
-      varying vec3 vDirection;
-      void main() {
-        float t = smoothstep(0.0, 0.45, vDirection.y);
-        gl_FragColor = vec4(mix(horizonColor, topColor, t), 1.0);
-        #include <tonemapping_fragment>
-        #include <colorspace_fragment>
-      }
-    `,
-  });
-  const mesh = new THREE.Mesh(new THREE.SphereGeometry(1500, 32, 16), material);
-  mesh.renderOrder = -1;
-  return mesh;
 }
 
 // ---------- Start ----------

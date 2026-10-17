@@ -3,7 +3,7 @@
 // Never hard-code the world. Every map is a JSON file in levels/ (see levels/blank.json).
 //
 // Positions are in meters. heading is in degrees: 0 faces +Z, 90 faces +X.
-// Ground types: flat (asphalt grid), grass (green, less grip).
+// Ground types: flat (concrete), grass (less grip).
 // Prop types: box, wall, ramp, curl (curves up and over, upside down), cone, checkpoint,
 //   parking_spot, paint (flat color, no collision), grandstand,
 //   and the big generators in scenery.js: track, parking_lot, highway.
@@ -20,6 +20,9 @@ import { addMesh, headingToQuaternion, addFixedBoxCollider, BoxBatch } from "./l
 import { makeCarMesh, getCarSize, CAR_COLORS } from "./vehicles.js";
 import { addMover, stepMovers, syncMoverMeshes, resetMovers } from "./traffic.js";
 import { buildTrack, buildParkingLot, buildHighway, placeArch } from "./scenery.js";
+import { surfaceMaterial, uvInMeters } from "./materials.js";
+import { dressTestSite } from "./decor.js";
+import { addGrandstand } from "./trackside.js";
 
 export async function fetchLevelList() {
   const response = await fetch("/levels/index.json");
@@ -50,13 +53,22 @@ export function buildLevel(level, scene, world, RAPIER) {
     events: [], // things that happened, like "rival_parked"
     goal: null,
     goalState: null,
+    racingLine: null,
     groundCollider: null,
     grassGround: false,
+    gravelCollider: null,
     spawn: level.spawn,
     time: 0,
   };
 
-  buildGround(built, level.ground || { type: "flat", size: 1000 });
+  // Levels with real elevation get hilly ground from the track builder instead.
+  const ground = level.ground || { type: "flat", size: 1000 };
+  built.heightAt = function () {
+    return 0;
+  };
+  if (!ground.terrain) {
+    buildGround(built, ground);
+  }
 
   const props = level.props || [];
   for (const prop of props) {
@@ -71,6 +83,10 @@ export function buildLevel(level, scene, world, RAPIER) {
   // A track can choose the spawn point for us (just before its start line).
   if (level.spawn && level.spawn.onTrack && built.trackSpawn) {
     built.spawn = built.trackSpawn;
+  }
+
+  if (level.decor === "testsite") {
+    dressTestSite(built);
   }
 
   if (level.goal) {
@@ -155,6 +171,11 @@ export function removeLevel(built) {
 // Is this collider the grass ground? (The car uses this to lose grip off the track.)
 export function isGrass(built, collider) {
   return built.grassGround && built.groundCollider !== null && collider.handle === built.groundCollider.handle;
+}
+
+// Is this collider a race track's gravel traps? (Less grip than grass, and lots of drag.)
+export function isGravel(built, collider) {
+  return built.gravelCollider !== null && built.gravelCollider !== undefined && collider.handle === built.gravelCollider.handle;
 }
 
 // ---------- Goals ----------
@@ -344,12 +365,13 @@ function wrapAngle(angle) {
 function buildGround(built, ground) {
   const size = ground.size || 1000;
   built.grassGround = ground.type === "grass";
-  const texture = makeGridTexture(built.grassGround);
-  texture.repeat.set(size / 10, size / 10); // one texture tile = 10 m
-  const mesh = new THREE.Mesh(
-    new THREE.PlaneGeometry(size, size),
-    new THREE.MeshStandardMaterial({ map: texture, roughness: 0.95, metalness: 0 })
-  );
+  // Photo-textured ground: grass for fields, concrete for the test pad ("flat").
+  let surface = "concrete";
+  if (built.grassGround) {
+    surface = "grass";
+  }
+  const geometry = uvInMeters(new THREE.PlaneGeometry(size, size), size, size, surface);
+  const mesh = new THREE.Mesh(geometry, surfaceMaterial(surface));
   mesh.rotation.x = -Math.PI / 2;
   mesh.receiveShadow = true;
   addMesh(built, mesh);
@@ -403,25 +425,10 @@ function buildProp(built, prop) {
   }
 }
 
-// Stepped seating with a roof, for the side of a race track. Runs along its heading.
+// A covered grandstand full of people, for the side of a race track. Runs along its heading;
+// (x, z) is the middle of its front wall and the seats rise toward its local +X.
 function buildGrandstand(built, prop) {
-  const length = prop.length || 80;
-  const rotation = headingToQuaternion(prop.heading || 0);
-  const batch = new BoxBatch();
-  for (let step = 0; step < 5; step++) {
-    batch.add(step * 2.2, 0.6 + step * 1.2, 0, 2.2, 1.2 + step * 2.4, length, 0, step % 2 === 0 ? "#8a929c" : "#7a828c");
-  }
-  batch.add(5.5, 9.5, 0, 13, 0.4, length, 0, "#e4e6e9"); // roof
-  for (let z = -length / 2; z <= length / 2; z = z + 20) {
-    batch.add(11, 5, z, 0.4, 9.5, 0.4, 0, "#9da3ab");
-  }
-  const mesh = batch.build();
-  mesh.position.set(prop.x, 0, prop.z);
-  mesh.quaternion.copy(rotation);
-  addMesh(built, mesh);
-  // One solid box for the whole thing.
-  const offset = new THREE.Vector3(5.5, 0, 0).applyQuaternion(rotation);
-  addFixedBoxCollider(built, prop.x + offset.x, 6, prop.z + offset.z, 13, 12, length, prop.heading || 0);
+  addGrandstand(built, prop.x, prop.z, prop.heading || 0, prop.length || 80, built.heightAt);
 }
 
 // A wedge that rises toward its heading direction. (x, z) is the middle of its footprint.
@@ -683,37 +690,4 @@ function addSolidBox(built, x, y, z, w, h, d, heading, color) {
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   addMesh(built, mesh);
-}
-
-// A ground tile with a light line every 5 m and a brighter one every 10 m.
-// Asphalt gray normally, green for grass.
-const gridTextures = {};
-function makeGridTexture(grass) {
-  let key = "asphalt";
-  let colors = ["#3b4048", "#4a5059", "#636a75"];
-  if (grass) {
-    key = "grass";
-    colors = ["#3d6b35", "#447a3b", "#4f8745"];
-  }
-  if (!gridTextures[key]) {
-    const canvas = document.createElement("canvas");
-    canvas.width = 256;
-    canvas.height = 256;
-    const ctx = canvas.getContext("2d");
-    ctx.fillStyle = colors[0];
-    ctx.fillRect(0, 0, 256, 256);
-    ctx.fillStyle = colors[1];
-    ctx.fillRect(127, 0, 2, 256);
-    ctx.fillRect(0, 127, 256, 2);
-    ctx.fillStyle = colors[2];
-    ctx.fillRect(0, 0, 3, 256);
-    ctx.fillRect(0, 0, 256, 3);
-    const texture = new THREE.CanvasTexture(canvas);
-    texture.wrapS = THREE.RepeatWrapping;
-    texture.wrapT = THREE.RepeatWrapping;
-    texture.colorSpace = THREE.SRGBColorSpace;
-    texture.anisotropy = 8;
-    gridTextures[key] = texture;
-  }
-  return gridTextures[key].clone();
 }

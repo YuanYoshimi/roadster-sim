@@ -113,5 +113,6 @@
     "radius": 8,
     "text": "Clear the whole lineup and land in the green zone"
   },
-  "checkpoints": []
+  "checkpoints": [],
+  "decor": "testsite"
 }

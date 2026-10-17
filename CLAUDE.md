@@ -8,6 +8,7 @@
 
 ## Current status (update as you go)
 
+- **Looks pass (Oct 16 evening):** **real Suzuka** (`levels/suzuka.json`, built by `tools/build-suzuka.mjs` from OpenStreetMap + NASA SRTM heights: 5.8 km, real elevation, crossover bridge) with terrain shaped around the track, a **speed-adaptive racing line** (G), and circuit dressing for every `track` (curbs only in corners, gravel traps that slow you, guardrails, pit lane, grandstands with a crowd, woods, horizon hills). Physically based sky, photo textures (Poly Haven CC0), rounded traffic cars. Top speed is now per trim (210 / 230 / 233 mph). The stunt camera that swung out while flying was removed (the user didn't like it). Attribution for OSM/SRTM/Poly Haven is in the README "Credits" section; keep it.
 - **Realism + demo pass:** real tire model (magic formula, load sensitivity, friction circle), power-limited 1 MW motors with regen, TC/ABS/ESC, anti-roll bars, bump stops, aero drag + downforce with an active wing, thrusters use real air mass and pressure (the car gets lighter), 120 Hz physics. New sculpted car model with a full cockpit (yoke + live screens), telemetry panel (T), procedural sound (M to mute), title screen, guided demo tour, presentation mode (P).
 - **Scenarios added:** Figure-8 Circuit (Suzuka-style), Warehouse Store Parking (Costco-style), Rush-Hour Expressway, built from generator props (see Milestone 5).
 - **Oct 16 prototype is on `main`:** keyboard driving, fans, all 10 thrusters (BOOST, LIFT, automatic barrel ROLL, yaw, soft landing), 3 trims, Blank + Reveal Curl + Reveal Jump levels, phone yoke over an HTTPS tunnel (tilt works upright or flat; drag-the-yoke fallback). The spec was updated to match the real Oct 15 reveal (see Milestone 3, "Reveal facts"). AI coach and scenario generator are not built yet.
@@ -86,7 +87,13 @@ Split the work so we rarely edit the same file. **Person A = Yuan, Person B = fr
 | `public/car.js` | B | Car physics: driving, fans, thruster tank, modes |
 | `public/car-model.js` | B | Stylized car mesh (swappable for .glb later) |
 | `public/effects.js` | B | Particle effects (thruster vapor, fan air) |
-| `public/scenery.js` | B | Generator props: `track`, `parking_lot`, `highway` |
+| `public/scenery.js` | B | Generator props: `track` (+ terrain, Suzuka dressing), `parking_lot`, `highway` |
+| `public/trackside.js` | B | Circuit dressing: corner detection, curbs, gravel traps, guardrails, pit lane, grandstands, horizon hills |
+| `public/racing-line.js` | B | Speed-adaptive racing line (green / yellow / red) |
+| `public/decor.js` | B | Trees, buildings, Ferris wheel, pit building, hangars, sound walls, overpasses |
+| `public/environment.js` | B | Sky, sun, reflections, haze |
+| `public/materials.js`, `public/textures/` | B | Photo-textured surfaces (asphalt, grass, concrete, gravel; Poly Haven CC0) |
+| `tools/build-suzuka.mjs`, `tools/data/` | B | Builds `levels/suzuka.json` from OpenStreetMap (cached) + SRTM elevation |
 | `public/traffic.js` | B | Moving cars and people (highway traffic, lot cruisers, rival, shoppers) |
 | `public/vehicles.js` | B | Box-style car/truck meshes (one merged mesh each, fast to draw) |
 | `public/level-utils.js` | B | Shared level helpers (merged paint/boxes, colliders, text signs) |
@@ -178,7 +185,9 @@ Base these on the reveal claims below. Make it **fun and readable** first, reali
 - **Soft landing (Rocket, automatic):** when falling too fast to stop, the corner thrusters fire just in time to touch down at about 3 m/s.
 - **Landing assist (all trims):** auto-levels the car near the ground. R / RESET if it flips.
 - **Trims** switch from the HUD, phone MODE, or keys 1/2/3. **Rocket is the default** because it has every demo feature. Buttons a trim doesn't have do nothing (greyed out on the phone).
-- **Stunt camera:** while the car is upside down, rolling, or high in the air, the chase camera swings out to the side so the move is visible.
+- **Camera:** the chase camera stays behind the car, also while flying and rolling. (A "stunt camera" that swung out to the side was removed: the user didn't like it.)
+- **Top speed per trim** (reveal claims): Performance 338 km/h (210 mph), Thrust 370 km/h (230 mph), Rocket 375 km/h ("over 230 mph"). `CONFIG.car.topSpeedKmh`.
+- **Surfaces:** grass 55% grip; gravel traps 45% grip plus drag (about 0.5 g of slowing), like real gravel.
 
 ### Milestone 4: AI coach (the main AI feature and the sponsor tool usage)
 - Every few seconds, and immediately on key events, the game sends a short **car state summary** to the server. Key events include:
@@ -222,12 +231,12 @@ Base these on the reveal claims below. Make it **fun and readable** first, reali
 - Prop types to start: `box`, `ramp`, `curl` (the reveal's curved ramp that bends up and over until upside down: `radius`, `width`, `degrees`), `wall`, `cone`, `checkpoint`, `parking_spot`, `paint` (flat color, no collision).
 - Parked car kinds: `compact` (robotaxi-sized), `sedan`, `suv`, `pickup`, `van`, `semi`. Generic shapes only, never Tesla models.
 - **Generator props** (in `scenery.js`) build a whole scene from a few numbers, which keeps levels short and easy for the AI scenario generator (Milestone 6) to write:
-  - `track`: `points` [[x, z, height]...] joined into a smooth closed loop (heights make bridges), `width`, `startAt`, `checkpoints`. Builds the road, curbs, bridge walls and pillars, the start line, and lap gates. Use with ground type `grass` (less grip off track) and goal type `lap`.
+  - `track`: `points` [[x, z, height, bridgeLift]...] joined into a smooth closed loop (on flat ground heights make bridges), `width`, `startAt`, `checkpoints`, `racingLine` (true = speed-adaptive line), `scenery` (`"suzuka"` or `"countryside"`), `barriers` (false = no gravel/guardrails). Builds the road with a 1 m asphalt shoulder, curbs in corners, gravel traps, guardrails, bridge walls and pillars, the start line, and lap gates. Use with ground type `grass` (less grip off track) and goal type `lap`. With `"ground": { "terrain": true }` the heights are real elevation and the hilly ground is built around the track (only `bridgeLift` makes a bridge).
   - `parking_lot`: `pairs`, `spotsPerRow`, `freeSpot` [pair, row, index], `rival`, `rivalSpeedKmh`, `cruisers`, `shoppers`, `carts`, `seed`. A full lot with one open spot, cars hunting for parking, a rival heading for your spot, shoppers, and a store. Use with goal type `park`.
   - `highway`: `length`, `lanesEachWay`, `laneWidth`, `traffic` { `count`, `oncoming`, `speedsKmh` per lane, `jam` { `z`, `length` } }. Divided highway driving on the left (Japan), guard rails, lamps, exit signs, traffic that keeps a safe gap and queues, and an accident jam across every lane.
 - Car behaviors (in `cars` or made by generators): `parked`, `stopped`, `path` (follows `path` points, `loop`), `rival` (path ending in your spot), `lane` (highway traffic), `walker` (shoppers). Moving ones are kinematic bodies that slow down or wait for the player.
 - Goal types: `reach` (green zone, optional `timeLimit`), `lap` (gates + lap timer), `park` (stop lined up in the open spot before the rival).
-- Ground types: `flat` (asphalt grid) and `grass` (less grip, `CONFIG.surfaces.grassGrip`).
+- Ground types: `flat` (concrete) and `grass` (less grip, `CONFIG.surfaces.grassGrip`), optionally `"terrain": true` (track levels only). `"decor": "testsite"` adds hangars, trees and hills around a test pad.
 - Car behaviors to start: `parked`, `drive_straight` (constant speed along heading), `follow_path` (list of points), `rival_to_spot` (drives toward a parking spot).
 - `"model"` can later point to a `.glb` file (e.g. a Tokyo street chunk from Project PLATEAU, or a racetrack). Load it with GLTFLoader and generate a static trimesh collider from it. Write this loader path even if no `.glb` exists yet.
 - A **level select menu** on the game screen (and ideally the phone).
@@ -235,11 +244,13 @@ Base these on the reveal claims below. Make it **fun and readable** first, reali
   1. `blank.json`: flat ground, one ramp, a few cones. **Default.**
   2. `reveal-curl.json`: the reveal's main stunt. A runway into a 10 m radius curl. Fans on, drive up and over (upside down at ~20 m), ROLL off the top, soft-land in the green zone.
   3. `tesla-event.json` ("Reveal Jump"): a runway, a big ramp, and the reveal lineup to **jump over** (compact robotaxi, pickup, semi, SUV, sedan). Hold LIFT for height, tap ROLL for style. Goal: clear them all and land.
-  4. `circuit.json` ("Figure-8 Circuit, Suzuka-style"): ~2.7 km figure-8 with a bridge crossover, grass runoff, 12 gates, lap timer. (Inspired by Suzuka's layout, not an exact copy.)
-  5. `warehouse-parking.json` ("Warehouse Store Parking, Costco-style"): full lot, one open spot, a rival SUV heading for it (~33 s), cruisers and shoppers. Park first, or fly over the rows. No real store branding.
-  6. `expressway.json` ("Rush-Hour Expressway"): 2.4 km, 3 lanes each way, ~70 moving cars, an accident jam at 1.3 km blocking every lane. Reach the exit in 80 s (fly over the jam with LIFT).
-  3. `parking-steal.json`: a simple block-city street. A free parking spot is ahead, and a rival car is heading for it. Goal: get into the spot first. You'll need the thruster and/or fans to win.
-  4. `slalom.json`: cones and checkpoints with a timer. Teaches fan grip.
+  4. `suzuka.json` ("Suzuka Circuit (real layout)"): generated by `node tools/build-suzuka.mjs`. Real layout and elevation, 16 gates, racing line, grandstands, pit lane.
+  5. `circuit.json` ("Figure-8 Circuit, Suzuka-style"): ~2.7 km figure-8 with a bridge crossover, gravel and grass runoff, 12 gates, lap timer. (Inspired by Suzuka's layout, not an exact copy.)
+  6. `warehouse-parking.json` ("Warehouse Store Parking, Costco-style"): full lot, one open spot, a rival SUV heading for it (~33 s), cruisers and shoppers. Park first, or fly over the rows. No real store branding.
+  7. `expressway.json` ("Rush-Hour Expressway"): 2.4 km, 3 lanes each way, ~70 moving cars, an accident jam at 1.3 km blocking every lane. Reach the exit in 80 s (fly over the jam with LIFT).
+- Ideas, not built yet:
+  - `parking-steal.json`: a simple block-city street. A free parking spot is ahead, and a rival car is heading for it. Goal: get into the spot first. You'll need the thruster and/or fans to win.
+  - `slalom.json`: cones and checkpoints with a timer. Teaches fan grip.
 - Later, optionally: `tokyo-shibuya.json` using a PLATEAU model chunk (free 3D Tokyo city data, free for commercial use, FBX → convert to glb). **Not in the first build.**
 
 ### Milestone 6: AI scenario generator (second AI feature)

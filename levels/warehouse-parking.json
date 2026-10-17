@@ -2,7 +2,7 @@
   "name": "Warehouse Store Parking (Costco-style)",
   "description": "Saturday at the warehouse club. The lot is full except one spot, and another driver is heading for it. Cars are circling and shoppers are walking.",
   "spawn": { "x": 0, "y": 0, "z": -30, "heading": 0 },
-  "ground": { "type": "flat", "size": 600 },
+  "ground": { "type": "grass", "size": 800 },
   "model": null,
   "props": [
     {

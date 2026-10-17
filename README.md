@@ -19,7 +19,8 @@ An AI coach powered by **ai& Inference** is coming next.
 |---|---|
 | Driving, fans (incl. upside down), BOOST, LIFT, barrel ROLL, soft landing, 3 trims | AI coach (Milestone 4) |
 | Phone yoke over HTTPS tunnel (tilt upright or flat, drag fallback) | AI scenario generator (Milestone 6) |
-| 6 levels: Blank, Reveal Curl, Reveal Jump, Figure-8 Circuit, Warehouse Parking, Rush-Hour Expressway | Sound, AI-generated scenarios |
+| 7 levels: Blank, Reveal Curl, Reveal Jump, **Suzuka (real layout)**, Figure-8 Circuit, Warehouse Parking, Rush-Hour Expressway | |
+| Speed-adaptive racing line, telemetry, sound, title screen, guided demo | |
 
 ## Setup
 
@@ -64,6 +65,7 @@ The tunnel address changes each time you restart `npm run phone`, so rescan the 
 | Trim | MODE | 1 / 2 / 3 |
 | Reset car | RESET | R |
 | Camera (chase / cockpit / overhead) | | C |
+| Racing line on/off (Suzuka, Figure-8) | | G |
 | Next level | | L |
 | Recenter steering | CENTER | |
 | Telemetry panel | | T |
@@ -71,10 +73,11 @@ The tunnel address changes each time you restart `npm run phone`, so rescan the 
 | Presentation mode (clean screen) | | P |
 | Menu / guided demo: next scene | | Esc / N |
 
-Trims, as in the reveal: **Performance** (fans only), **Thrust** (fans + 4 rear thrusters, 200 L of air), **Rocket** (all 10 thrusters, 600 L of air; this is the default). In Rocket mode, steering while airborne fires the front yaw thrusters, and the corner thrusters soften hard landings by themselves.
+Trims, as in the reveal: **Performance** (fans only, top speed 210 mph / 338 km/h), **Thrust** (fans + 4 rear thrusters, 200 L of air, 230 mph / 370 km/h), **Rocket** (all 10 thrusters, 600 L of air, 233 mph / 375 km/h; this is the default). In Rocket mode, steering while airborne fires the front yaw thrusters, and the corner thrusters soften hard landings by themselves.
 
 **Scenarios:**
-- **Figure-8 Circuit (Suzuka-style):** set a lap time through 12 green gates. The track crosses over itself on a bridge, and the grass is slippery.
+- **Suzuka Circuit (real layout):** the real 5.8 km track, built from OpenStreetMap with real elevation (about 40 m from the lowest to the highest point), the figure-8 crossover bridge, grandstands, pit lane, gravel traps and guardrails. The **racing line adapts to your speed**: green = go, yellow = lift, red = brake now (it knows your fans add grip). Press G to hide it.
+- **Figure-8 Circuit (Suzuka-style):** set a lap time through 12 green gates. The track crosses over itself on a bridge. Grass is slippery and gravel traps slow you down hard.
 - **Warehouse Store Parking (Costco-style):** the lot is full except one spot, and a purple SUV is heading for it. Park first, lined up and stopped, or fly over the rows.
 - **Rush-Hour Expressway:** dense traffic that drives on the left like in Japan, and an accident blocking every lane at 1.3 km. Reach the exit in 80 s. Hint: LIFT and lean forward.
 
@@ -87,6 +90,13 @@ The phone shows **tilt OK** (green) when motion data is arriving. If it says **t
 - The game opens on a **title screen** with the phone QR code and the car turning in a showroom. **Guided demo** runs four scenes (the curl stunt, the parking lot, the highway jam, a circuit lap) with hints that react to what you're doing. Press N to skip a scene, Esc for the menu.
 - **P** hides the help panels for the projector. **T** opens the telemetry panel (G-G plot, all four tires, traces, thrusters).
 - Sound is generated live (motor, wind, tire squeal, fans, thrusters). Press M to mute.
+
+## How it looks
+
+- **Sky and light:** a physically based sky with clouds, a sun that matches it, reflections taken from the same sky, and distance haze (`environment.js`).
+- **Surfaces:** photo textures for asphalt, grass, concrete and gravel, sized in real meters (`materials.js`).
+- **Circuits** (`trackside.js`): curbs only in corners, gravel traps on the outside of corners, steel guardrails, pit lane and pit wall, grandstands with a crowd, woods, and hills on the horizon.
+- **Suzuka:** the layout comes from OpenStreetMap and the heights from NASA satellite data. `node tools/build-suzuka.mjs` rebuilds `levels/suzuka.json` (the downloaded map data is cached in `tools/data/`). We build the 3D track ourselves from this data instead of using a downloaded 3D model of the real circuit, because those models are copyrighted.
 
 ## How it works
 
@@ -107,12 +117,19 @@ Put `AI_BASE_URL`, `AI_API_KEY` and `AI_MODEL` in `.env` (copy `.env.example`). 
 
 1. Copy `levels/blank.json` to `levels/my-level.json` and edit it. Positions are in meters, and `heading` is in degrees (0 = +Z, 90 = +X).
    - Prop types: `box`, `wall`, `ramp`, `curl` (bends up and over until upside down), `cone`, `checkpoint`, `parking_spot`, `paint` (flat color, no collision), `grandstand`.
-   - Generator props that build a whole scene: `track`, `parking_lot`, `highway` (see `levels/circuit.json`, `levels/warehouse-parking.json`, `levels/expressway.json` and the notes in `CLAUDE.md`).
+   - Generator props that build a whole scene: `track`, `parking_lot`, `highway` (see `levels/circuit.json`, `levels/suzuka.json`, `levels/warehouse-parking.json`, `levels/expressway.json` and the notes in `CLAUDE.md`).
    - Goals: `reach` (optional `timeLimit`), `lap`, `park`.
    - Car kinds: `compact`, `sedan`, `suv`, `pickup`, `van`, `semi` (behavior `parked` for now).
    - Goal: `{ "type": "reach", "x", "z", "radius", "text" }`.
 2. Add it to `levels/index.json`.
 3. Pick it from the level menu, or open http://localhost:3000/game.html?level=my-level.
+
+## Credits
+
+- Suzuka track layout: © OpenStreetMap contributors, available under the Open Database License (ODbL), https://www.openstreetmap.org/copyright
+- Elevation: NASA SRTM (30 m), fetched through the OpenTopoData API.
+- Textures (asphalt, grass, concrete, gravel): Poly Haven (polyhaven.com), CC0.
+- Libraries: three.js, Rapier, Express, ws, qrcode.
 
 ## Before submitting
 
