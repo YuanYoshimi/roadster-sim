@@ -112,6 +112,8 @@ test("microphone captures one question, waits for final transcription, and cance
     voice.setEnabled(true);
     assert.equal(voice.startListening("en"), true);
     assert.equal(recognition.lang, "en-US");
+    assert.equal(recognition.continuous, false);
+    assert.equal(recognition.interimResults, true);
     voice.stopListening();
     voice.stopListening();
     assert.equal(recognition.stops, 1);
@@ -132,6 +134,22 @@ test("microphone captures one question, waits for final transcription, and cance
     recognition.onerror({ error: "not-allowed" });
     recognition.onend();
     assert.equal(questions.length, 1);
-    assert.match(statuses.at(-1), /not-allowed/);
+    assert.match(statuses.at(-1), /denied/);
   } finally { delete globalThis.window; }
+});
+
+test("radio acknowledgment survives a fast answer and both wait for a straight", function () {
+  const spoken=[];
+  globalThis.window={speechSynthesis:{speak:function(s){spoken.push(s);},cancel:function(){},getVoices:function(){return [];}}};
+  globalThis.SpeechSynthesisUtterance=class {constructor(text){this.text=text;}};
+  try {
+    const voice=new EngineerVoice(function(){},function(){});voice.setEnabled(true);
+    voice.acknowledge("en");voice.queue({text:"T1: brake 5 m later, based on two matching laps.",lang:"en"});
+    voice.update(SAMPLE_STATE,1,false);assert.equal(spoken.length,0);
+    const straight={...SAMPLE_STATE,steer:0};voice.update(straight,1,false);
+    assert.match(spoken[0].text,/Copy/);
+    spoken[0].onend();voice.update(straight,1,false);
+    assert.match(spoken[1].text,/two matching laps/);
+    voice.acknowledge("en");voice.setEnabled(false);assert.equal(voice.acknowledgment,null);
+  } finally {delete globalThis.window;delete globalThis.SpeechSynthesisUtterance;}
 });

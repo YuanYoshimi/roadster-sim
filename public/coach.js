@@ -104,7 +104,7 @@ export class RaceEngineer {
       <p class="engineer-question" hidden></p>
       <form><input aria-label="Question for your engineer" placeholder="Ask your engineer…" maxlength="400"><button>Ask</button></form>
       <button type="button" class="engineer-talk" aria-pressed="false">Talk to engineer</button>
-      <small class="speech-note">Click to start/finish, or hold V. Uses your browser’s speech service.</small>`;
+      <small class="speech-note">Click Talk, speak, then pause for a reply. Or hold V and release to send. Uses your browser’s speech service.</small>`;
     document.body.appendChild(this.panel);
     this.language = this.panel.querySelector("select");
     this.language.value = CONFIG.coach.language;
@@ -143,7 +143,10 @@ export class RaceEngineer {
     this.previewButton = this.panel.querySelector(".voice-preview");
     this.input = this.panel.querySelector("form input");
     this.input.maxLength = CONFIG.coach.maxQuestionLength;
-    this.voice = new EngineerVoice(this.ask.bind(this), this.setStatus.bind(this));
+    this.voice = new EngineerVoice(this.ask.bind(this), this.setStatus.bind(this), function (text) {
+      this.questionText.textContent = "Hearing: “" + text + "”";
+      this.questionText.hidden = false;
+    }.bind(this));
     try { this.voice.voiceName = window.localStorage.getItem("race-engineer-voice") || ""; } catch {}
     this.power.addEventListener("click", function () {
       this.setPower(!this.enabled);
@@ -269,6 +272,7 @@ export class RaceEngineer {
       this.setStatus("Choose Free drive before talking to your engineer.");
       return;
     }
+    this.invalidate(true); // Give the microphone priority over an automatic tip, preserving measured writes.
     // Starting a conversation also enables the engineer's spoken reply.
     const enabled = this.voice.setEnabled(true);
     this.voiceToggle.textContent = enabled ? "Voice on" : "Voice off";
@@ -535,6 +539,8 @@ export class RaceEngineer {
       this.questionText.textContent = "You: “" + question + "”";
       this.questionText.hidden = false;
       this.setPracticeGoal(goal);
+      this.voice.acknowledge(this.language.value);
+      this.setStatus("Heard you. Checking measured laps for your practice goal…");
       return;
     }
     if (!this.state || this.paused) {
@@ -545,6 +551,7 @@ export class RaceEngineer {
     this.input.blur();
     this.questionText.textContent = "You: “" + question + "”";
     this.questionText.hidden = false;
+    this.voice.acknowledge(this.language.value);
     if (this.controller) {
       this.queuedQuestion = question;
       this.setStatus("Question queued; waiting for the current reply.");
@@ -560,7 +567,7 @@ export class RaceEngineer {
     const state = { ...this.state, events: Array.from(this.events) };
     this.events.clear();
     const lang = this.language.value;
-    this.setStatus("Engineer thinking…");
+    this.setStatus(question ? "Heard you. Checking live driving data and lap memory…" : "Engineer thinking…");
     const timeout = setTimeout(function () { controller.abort(); }, CONFIG.coach.requestTimeoutMs + CONFIG.memory.browserTimeoutMs);
     try {
       await this.pendingLapWrite;

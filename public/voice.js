@@ -1,4 +1,4 @@
-// Owner: friend — browser speech with one pending message, never a growing queue.
+// Owner: friend — one pending answer and one short radio acknowledgment, never a growing queue.
 import { CONFIG } from "./config.js";
 
 export function instantCallout(events, lang) {
@@ -20,10 +20,11 @@ export function instantCallout(events, lang) {
 }
 
 export class EngineerVoice {
-  constructor(onQuestion, onStatus) {
+  constructor(onQuestion, onStatus, onTranscript = function () {}) {
     this.enabled = false;
     this.voiceName = "";
     this.pending = null;
+    this.acknowledgment = null;
     this.current = null;
     this.utterance = null;
     this.listening = false;
@@ -33,18 +34,28 @@ export class EngineerVoice {
     const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     this.recognition = Recognition ? new Recognition() : null;
     if (this.recognition) {
-      this.recognition.continuous = true;
-      this.recognition.interimResults = false;
+      this.recognition.continuous = false; // Send one question automatically when the speaker finishes.
+      this.recognition.interimResults = true;
       this.recognition.onresult = function (event) {
         if (this.cancelled) return;
+        let interim = "";
         for (let i = event.resultIndex; i < event.results.length; i++) {
           if (event.results[i].isFinal) this.transcript += event.results[i][0].transcript + " ";
+          else interim += event.results[i][0].transcript;
         }
+        onTranscript((this.transcript + interim).trim());
       }.bind(this);
       this.recognition.onerror = function (event) {
         this.transcript = "";
         this.cancelled = true;
-        onStatus("Microphone: " + event.error + ". You can type your question.");
+        const help = {
+          "audio-capture": "No microphone audio is available. Check your Mac input device and microphone access for this app.",
+          "not-allowed": "Microphone access was denied. Allow microphone access for this page and app, then try again.",
+          "service-not-allowed": "Speech recognition is unavailable in this browser. Try the game in Chrome.",
+          "network": "Speech recognition could not reach its service. Check your connection or try Chrome.",
+          "no-speech": "I didn't hear a question. Click Talk and try again.",
+        };
+        onStatus((help[event.error] || "Microphone: " + event.error + ".") + " You can type your question.");
       }.bind(this);
       this.recognition.onend = function () {
         this.listening = false;
@@ -67,6 +78,7 @@ export class EngineerVoice {
 
   clear() {
     this.pending = null;
+    this.acknowledgment = null;
     this.current = null;
     this.utterance = null;
     if ("speechSynthesis" in window) window.speechSynthesis.cancel();
@@ -81,24 +93,33 @@ export class EngineerVoice {
     }
   }
 
+  acknowledge(lang) {
+    if (!this.enabled) return;
+    this.acknowledgment = { text: lang === "ja" ? "了解。走行データを確認します。" : "Copy. Checking your driving data.",
+      lang: lang, kind: "acknowledgment", expires: performance.now() + CONFIG.coach.tipLifetimeMs };
+  }
+
   update(state, throttle, paused) {
     if (!this.enabled) return;
     const safe = !paused && !this.listening && !state.airborne &&
       (state.speedKmh < CONFIG.coach.stoppedSpeedKmh ||
         (Math.abs(state.steer) < CONFIG.coach.straightSteer && throttle > CONFIG.coach.straightThrottle));
     if (this.current && !safe && !this.current.urgent) {
-      if (!this.pending) this.pending = this.current;
+      if (this.current.kind === "acknowledgment") this.acknowledgment = this.current;
+      else if (!this.pending) this.pending = this.current;
       this.current = null;
       window.speechSynthesis.cancel();
     }
-    const message = this.pending;
+    if (this.acknowledgment && performance.now() > this.acknowledgment.expires) this.acknowledgment = null;
+    const message = this.pending?.urgent ? this.pending : this.acknowledgment || this.pending;
     if (!message || this.current) return;
     if (performance.now() > message.expires) {
       this.pending = null;
       return;
     }
     if (paused || this.listening || (!safe && !message.urgent)) return;
-    this.pending = null;
+    if (message === this.acknowledgment) this.acknowledgment = null;
+    else this.pending = null;
     this.speak(message);
   }
 
@@ -119,11 +140,16 @@ export class EngineerVoice {
     }.bind(this));
     if (selectedVoice) speech.voice = selectedVoice;
     speech.rate = CONFIG.coach.speechRate;
-    speech.onend = speech.onerror = function () {
+    const finish = function () {
       if (this.utterance === speech) {
         this.current = null;
         this.utterance = null;
       }
+    }.bind(this);
+    speech.onend = finish;
+    speech.onerror = function (event) {
+      finish();
+      if (!["canceled", "interrupted"].includes(event.error)) this.onStatus("Voice playback failed (" + event.error + "). The reply is still visible in text.");
     }.bind(this);
     window.speechSynthesis.speak(speech);
   }
@@ -138,7 +164,7 @@ export class EngineerVoice {
     this.listening = true;
     try {
       this.recognition.start();
-      this.onStatus("Listening… click Finish talking or release V to ask.");
+      this.onStatus("Listening… speak your question, then pause. Or click Finish talking / release V.");
       return true;
     } catch {
       this.listening = false;

@@ -215,3 +215,28 @@ test("changing the practice goal preserves in-flight measured laps and waits for
     delete globalThis.window;
   }
 });
+
+test("a captured spoken question is acknowledged before its data-backed answer", async function () {
+  const originalFetch=globalThis.fetch,spoken=[];let recognition,requestBody;
+  class Recognition {constructor(){recognition=this;}start(){}stop(){}abort(){}}
+  globalThis.document={createElement:function(){return new Element();},body:{appendChild:function(){}}};
+  globalThis.window={SpeechRecognition:Recognition,addEventListener:function(){},speechSynthesis:{cancel:function(){},getVoices:function(){return [];},speak:function(s){spoken.push(s);}}};
+  globalThis.SpeechSynthesisUtterance=class {constructor(text){this.text=text;}};
+  globalThis.fetch=async function(url,options){requestBody=JSON.parse(options.body);return {ok:true,json:async function(){return {text:"I can see speed and steering, but no clean lap comparison yet.",source:"ai",latencyMs:20};}};};
+  try {
+    const engineer=new RaceEngineer();engineer.setPower(true);
+    const stopped={...SAMPLE_STATE,speedKmh:0,steer:0,events:[]};engineer.update(stopped,0,false);
+    engineer.startConversation();
+    const result=[{transcript:"What data can you see?"}];result.isFinal=true;
+    recognition.onresult({resultIndex:0,results:[result]});recognition.onend();
+    assert.match(engineer.questionText.textContent,/What data can you see/);
+    assert.ok(engineer.voice.acknowledgment);
+    engineer.update(stopped,0,false);assert.match(spoken[0].text,/Copy/);
+    await new Promise(setImmediate);
+    assert.equal(requestBody.question,"What data can you see?");assert.equal(requestBody.memory.enabled,true);
+    assert.match(engineer.tip.textContent,/no clean lap comparison/);
+    spoken[0].onend();engineer.update(stopped,0,false);
+    assert.match(spoken[1].text,/speed and steering/);
+    engineer.setPower(false);
+  } finally {globalThis.fetch=originalFetch;delete globalThis.window;delete globalThis.document;delete globalThis.SpeechSynthesisUtterance;}
+});
