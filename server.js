@@ -15,6 +15,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 import QRCode from "qrcode";
+import { installRaceDataRoutes } from "./server/race-data.js";
 import { installCoachRoutes } from "./server/ai.js";
 import { RaceMemory, installMemoryRoutes } from "./server/memory.js";
 
@@ -56,6 +57,7 @@ app.use(express.json({ limit: "100kb" }));
 app.use("/vendor/three", express.static(path.join(rootDir, "node_modules/three")));
 app.use("/vendor/rapier", express.static(path.join(rootDir, "node_modules/@dimforge/rapier3d-compat/dist")));
 app.use("/levels", express.static(path.join(rootDir, "levels")));
+app.use("/fixtures", express.static(path.join(rootDir, "fixtures")));
 app.use(express.static(path.join(rootDir, "public")));
 
 app.get("/", function (req, res) {
@@ -78,6 +80,7 @@ app.get("/api/qr.svg", async function (req, res) {
 // Friend's coach endpoint; scenario generation is a separate milestone.
 const memory = new RaceMemory();
 installMemoryRoutes(app, memory);
+installRaceDataRoutes(app, rootDir);
 installCoachRoutes(app, { memory: memory });
 
 function getPhoneUrl(req) {

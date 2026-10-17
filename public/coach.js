@@ -509,7 +509,7 @@ export class RaceEngineer {
     for (const event of state.events || []) this.events.add(event);
     if (this.voice.listening) return;
     if (this.controller || this.planBusy) return;
-    if (this.needsLapFeedback && this.practiceGoal.type !== "general") {
+    if (this.needsLapFeedback) {
       this.needsLapFeedback = false;
       this.loadMeasuredFocus();
       return;

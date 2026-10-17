@@ -6,6 +6,13 @@ export function instantCallout(events, lang) {
   if (events.includes("crash") || events.includes("flip")) {
     return { text: ja ? "衝突です。必要ならRでリセット。" : "Impact detected. Press R to reset if needed.", lang: lang };
   }
+  const measured = {
+    abs_active: ja ? "ABSが作動しています。ブレーキを滑らかに。" : "ABS is active. Ease into the brake smoothly.",
+    traction_control: ja ? "トラクション制御が作動しています。アクセルを滑らかに。" : "Traction control is active. Feed in the throttle smoothly.",
+    tires_hot: ja ? "シミュレーションのタイヤ温度が高いです。滑りを抑えましょう。" : "Simulated tire temperatures are high. Reduce sliding.",
+    tires_cold: ja ? "タイヤが冷えています。徐々にペースを上げましょう。" : "Tires are cold. Build pace gradually.",
+  };
+  for (const event of events) if (measured[event]) return { text: measured[event], lang: lang };
   if (events.includes("tank_empty")) {
     return { text: ja ? "エアが空です。スラスターは使えません。" : "Air tank empty. Thrusters are unavailable.", lang: lang };
   }

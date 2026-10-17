@@ -46,3 +46,9 @@ body:has(#telemetry[style*="block"]) #engineer { right: 592px; }
 #engineer .practice-goal { display: block; width: 100%; margin-top: 4px; }
 .practice-label, .practice-evidence { display: block; color: var(--muted, #abb5c4); font-size: 11px; line-height: 1.45; margin: 6px 0; }
 .practice-evidence:empty { display: none; }
+
+#race-data { position: fixed; top: 224px; left: 16px; z-index: 8; width: 245px; padding: 10px 12px; border-radius: 12px; background: rgba(14,23,32,.86); color: #e7eef6; font: 12px/1.45 system-ui; }
+#race-data summary { cursor: pointer; }
+#race-data p { overflow-wrap: anywhere; }
+#race-data button, #race-data a { color: #d0f5ff; background: #253543; border: 1px solid #526779; border-radius: 6px; padding: 6px; display: inline-block; margin: 3px 0; }
+body.presenting #race-data { display: none; }

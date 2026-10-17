@@ -4,6 +4,30 @@
 // Numbers marked "reveal" are Tesla's claims from the Oct 15, 2026 event (not verified).
 
 export const CONFIG = {
+  analysis: {
+    sampleRateHz: 10,
+    logBatchSamples: 20,
+    maximumBufferedSamples: 36000,
+    maximumLapSamples: 18000,
+    maximumSampleGapSeconds: 0.5,
+    maximumTravelFactor: 2,
+    positionToleranceMeters: 5,
+    reverseToleranceMeters: 2,
+    trackLimitToleranceMeters: 1,
+    minimumLapSeconds: 5,
+    cornerMinimumSpeedKmh: 20,
+    cornerSteerDegrees: 3,
+    cornerLateralG: 0.35,
+    cornerMergeGapMeters: 20,
+    cornerMinimumLengthMeters: 10,
+    brakeLookbackMeters: 80,
+    cornerExitMeters: 30,
+    brakeThreshold: 0.1,
+    throttleThreshold: 0.5,
+    coldTireC: 45,
+    hotTireC: 115,
+    calloutCooldownSeconds: 30,
+  },
   coachingLoop: {
     clockSkewMs: 5000,
     minimumAttempts: 2,
@@ -32,7 +56,7 @@ export const CONFIG = {
   coach: {
     language: "en",
     intervalMs: 8000,
-    requestTimeoutMs: 3000,
+    requestTimeoutMs: 15000, // Allow the reasoning model to finish a conversational reply.
     maxHistory: 5,
     conversationTurns: 4,
     maxQuestionLength: 400,

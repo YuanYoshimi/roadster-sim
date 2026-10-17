@@ -13,8 +13,12 @@ import { TelemetryPanel } from "./telemetry.js";
 import { SoundEngine } from "./sound.js";
 import { Tour } from "./tour.js";
 import { RaceEngineer } from "./coach.js";
+import { RaceSession } from "./race-session.js";
 
 const engineer = new RaceEngineer();
+const raceSession = new RaceSession(function (lap) {
+  window.dispatchEvent(new CustomEvent("race:lap-summary", { detail: lap }));
+}, function (events) { pendingEvents.push(...events); });
 
 // ---------- Renderer, scene, lights ----------
 
@@ -360,6 +364,7 @@ function readControls() {
 let lastStateSent = 0;
 let pendingEvents = [];
 function sendStateIfDue(now) {
+  if (pendingEvents.includes("crash") || pendingEvents.includes("flip")) raceSession.analyzer.invalidate("impact");
   if (now - lastStateSent < 1000 / CONFIG.network.stateRateHz) {
     return;
   }
@@ -374,7 +379,10 @@ function sendStateIfDue(now) {
   state.altitude = Math.round(car.altitude * 10) / 10;
   state.events = pendingEvents;
   state.goalText = hud.goalText.textContent;
-  engineer.update(state, lastInput.gas, document.hidden || document.body.classList.contains("atTitle"));
+  const paused = document.hidden || document.body.classList.contains("atTitle");
+  if (level) raceSession.sample(car, lastInput, level.time, paused, pendingEvents);
+  state.events = pendingEvents;
+  engineer.update(state, lastInput.gas, paused);
   if (socket && socket.readyState === WebSocket.OPEN) {
     socket.send(JSON.stringify(state));
   }
@@ -453,6 +461,7 @@ async function loadLevel(index) {
     removeLevel(level);
   }
   level = buildLevel(data, scene, world, RAPIER);
+  raceSession.configure(level.track, engineer.trackId);
   car.reset(level.spawn);
   snapCamera = true;
   hud.timer.textContent = "";
@@ -468,6 +477,7 @@ async function loadLevel(index) {
 // Put the car back at the start, and restart the level's traffic, rival and timers.
 function restartScenario() {
   engineer.reset();
+  raceSession.reset();
   car.reset();
   if (level) {
     resetLevel(level);

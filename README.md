@@ -110,7 +110,7 @@ The phone shows **tilt OK** (green) when motion data is arriving. If it says **t
 
 ## How we use ai& (sponsor tool)
 
-1. **AI coach:** the game sends a short car-state summary periodically. ai& returns concise coaching in English or Japanese. Enable Voice on for speech on straights, hold V to ask a question in supported browsers, or type in the engineer panel. Missing credentials or API failure use clearly labeled practice tips. `/coach-lab.html` provides sample inputs. Yuan's lap analysis can supply measured summaries through the hook documented in [coach integration](docs/coach-integration.md).
+1. **AI coach:** the game sends a short car-state summary periodically. ai& returns concise coaching in English or Japanese. Enable Voice on for speech on straights, hold V to ask a question in supported browsers, or type in the engineer panel. Missing credentials or API failure use clearly labeled practice tips. `/coach-lab.html` provides sample inputs. Live browser telemetry now supplies measured lap/corner summaries through the pipeline documented in [coach integration](docs/coach-integration.md).
 2. **Scenario generator (planned):** describe a situation and have the model return a validated level JSON.
 
 Put `AI_BASE_URL`, `AI_API_KEY` and `AI_MODEL` in `.env` (copy `.env.example`). The key stays on the server.
@@ -143,7 +143,7 @@ Put `AI_BASE_URL`, `AI_API_KEY` and `AI_MODEL` in `.env` (copy `.env.example`). 
 
 The engineer can remember lap summaries and corner measurements across sessions using Neo4j Aura Free. See [setup and integration](docs/neo4j-memory.md). Run `npm run memory:check` to verify the connection without AI charges, or use the practice page to load isolated examples. The game still runs without Neo4j.
 
-The memory now links one repeated measured issue to a bounded coaching cue and the next comparable attempt's outcome. Try the free loop on `/coach-lab.html`, or run `npm run memory:loop-demo` to verify it in Aura. Actual driving feedback requires Yuan's structured analysis, matching comparison metadata and driving timestamps; examples stay in the separate demo dataset.
+The memory now links one repeated measured issue to a bounded coaching cue and the next comparable attempt's outcome. Try the free loop on `/coach-lab.html`, or run `npm run memory:loop-demo` to verify it in Aura. Actual circuit driving now produces structured analysis with matching comparison metadata and driving timestamps; examples and replays stay in the separate demo dataset.
 
 ### Camera views
 
@@ -151,4 +151,22 @@ In Free drive, use **Camera view** in the upper-right panel to choose Chase, Coc
 
 ### Goal-based engineer practice
 
-Tell the engineer “I want to work on corner speed at T4”, or choose a Practice goal. It selects one measured experiment and shows the supporting lap count, speed/offset differences and time loss. Goal plans and updates after measured laps use no AI credits; follow-up questions can use ai&. Exact seconds-based braking cues require the optional measured braking-time offset from analysis. Try **Load local goal examples** on `/coach-lab.html` for a labeled demonstration; real driving still needs Yuan's structured corner-analysis events.
+Tell the engineer “I want to work on corner speed at T4”, or choose a Practice goal. It selects one measured experiment and shows the supporting lap count, speed/offset differences and time loss. Goal plans and updates after measured laps use no AI credits; follow-up questions can use ai&. Exact seconds-based braking cues require the optional measured braking-time offset from analysis. Try **Load local goal examples** on `/coach-lab.html` for a labeled demonstration; real driving supplies corner-analysis events after clean circuit laps.
+
+
+## Live telemetry, lap analysis, and replay (milestones 1–2)
+
+On **Figure-8** or **Suzuka**, open **Driving data · 10 Hz** below the speed display. Telemetry records automatically while the game page is active, independently of engineer power and AI credits. Samples include speed, pedals, steering, lap time/number, normalized track position, lateral/longitudinal g, fan/trim settings, and all four simulated tire temperatures. This electric simulator has no engine gearbox/RPM; those CSV columns are blank, not invented.
+
+1. Finish the out-lap and cross the start/finish line. The analysis start line is the actual track line; its timing can differ slightly from the existing HUD's proximity-gate timer.
+2. Keep the same trim and fan setting and complete a clean lap. This learns a fixed T1/T2… corner map from steering/lateral-g runs and records your first reference.
+3. Further clean laps compare braking position, minimum speed, throttle pickup and corner duration with the best valid lap available **when that attempt began**. A new best becomes the next lap's immutable reference. Repeated issues need two comparisons against the same reference (usually three clean laps total).
+4. Turn the engineer on and choose a practice goal. Every completed measured lap triggers a free plan update, including the Overall driving goal. Follow-up questions and optional automatic AI explanations use ai&; voice uses free installed voices. The graph stores compact comparisons and evaluates later attempts.
+
+Off-track, airborne, impact, reverse, teleport, telemetry-gap/pause, or changed fan/trim laps are discarded as references. **ABS active** and **traction control active** callouts report actual simulator flags; they do not claim confirmed wheel lockup/wheelspin. Temperature callouts describe this simulator's simplified tire model.
+
+Raw samples append in bounded asynchronous batches to ignored `logs/<track>_roadster_<session>.csv`. Failed writes retry while the page remains open, and duplicate sequences are not appended again. The last hour of samples is also available from **Download telemetry CSV** (current session only). Close/reload can lose unflushed browser samples; download before ending a session. Learned corner maps are saved in ignored `tracks/<track>_<geometry-version>_<analysis-version>.json` and reused from disk/browser cache. Analysis continues if logging/storage is unavailable.
+
+Open [/race-replay.html](http://localhost:3100/race-replay.html), select a downloaded CSV, and click Play. It runs at real speed through the same `LapAnalyzer`, engineer, graph and voice path. Pause stops playback speech. Replay uses a separate demo memory namespace and starts with AI/voice off; enable the engineer for free measured plans. The provided `fixtures/race-session.csv` is **synthetic test data**, not a real or optimal driving lap. Regenerate it with `node tools/race-fixture.mjs`. Replay does not move the 3D car. Reset starts a new recording/reference session; the HUD may retain its separate best time. For a fast terminal check, run `npm run race:replay -- fixtures/race-session.csv` (no AI calls). Imported faster-driver reference laps and Assetto Corsa shared-memory capture are outside this browser implementation.
+
+Architecture: `game.js → race-session.js → shared/race-telemetry.js + shared/lap-analysis.js → race:lap-summary → coach.js → server/memory.js + server/ai.js → voice.js`. CSV replay enters the same analysis seam from `race-replay.js`. Raw telemetry never enters the language-model prompt; only compact validated car state and lap comparisons do.

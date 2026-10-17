@@ -1,6 +1,6 @@
 # Race engineer integration
 
-Yuan owns the simulator telemetry and lap/corner analysis. The friend owns the AI engineer and voice. The current coach already consumes the existing `makeState()` object locally; it works without a phone connected. It does not compute lap comparisons itself.
+Ownership update: the friend now implements browser telemetry, lap/corner analysis, AI engineer and voice (milestones 1–4). The coach consumes existing `makeState()` locally and completed comparisons from `RaceSession`/`LapAnalyzer`; both work without a phone connected.
 
 ## Run
 
@@ -14,7 +14,7 @@ Click Voice on for spoken tips. Click Talk to engineer, allow microphone access,
 
 Open `/coach-lab.html` to test with clearly labeled sample states without driving. Practice tips are rule based, not AI, and labeled as such. Missing settings, busy/failed providers and timeouts keep the game running. Question fallback explicitly reports that AI is unavailable. Crash, flip and empty-tank callouts are immediate rules and may interrupt speech. Resetting a scenario discards old context and replies.
 
-## Yuan's lap-summary connection
+## Live lap-summary connection
 
 When analysis finishes a valid lap, dispatch a compact **measured text summary** in the game browser:
 
@@ -54,12 +54,21 @@ Coach responses can include `coaching: { focus, outcome }`. The evidence card di
 
 Type or say “I want to work on corner speed at T4”, “I want to improve my braking”, or “I want to practice corner exit”. Explicit goal statements set the skill and optional corner. The Practice goal selector offers the same choices. Other questions retain the existing goal; up to four recent question/answer pairs accompany follow-ups as conversational context, not evidence. Goals last for this browser page; track/mode resets clear measurements and conversation.
 
-Selecting a goal requests a free measured plan through `/api/memory/focus`. With a non-general goal selected, incoming lap-summary events trigger free plan updates even when automatic paid tips are unchecked. The engineer must still be on. Questions that need AI explanation use ai& as before; goal selection does not opt into recurring paid requests. Speech still waits for a stop or straight. This is analysis after measured laps, not turn-by-turn timing of spoken cues.
+Selecting a goal requests a free measured plan through `/api/memory/focus`. Incoming lap-summary events trigger free plan updates for every goal even when automatic paid tips are unchecked. The engineer must still be on. Questions that need AI explanation use ai& as before; goal selection does not opt into recurring paid requests. Speech still waits for a stop or straight. This is analysis after measured laps, not turn-by-turn timing of spoken cues.
 
 Goal filtering restricts braking practice to braking offsets, corner-exit practice to throttle pickup, and an explicit corner to that corner. The evidence card includes the reference-relative minimum speed, braking/throttle offset, supporting sample count and average measured loss. Missing measurements produce a data-collection plan. More speed alone does not establish a braking adjustment or prove a causal improvement.
 
-Yuan can optionally add `corners[].brakedEarlySeconds`: positive means earlier, negative means later than the fixed reference, using aligned measured braking-event timing. This is independent of `timeLostSeconds`, which measures performance loss. If its sign agrees with the measured braking-distance error, a cue can use up to half the timing offset, capped at 0.3 s. Distance cues remain capped at 5 m. These are alternative units, not a conversion using the car's current speed. Earlier-braking cues are also supported when repeated measured braking offsets are negative. Without timing data, cues stay in metres. Throttle lift-off timing is not measured by the current contract; the engineer must not invent an exact lift point.
+The browser analyzer now supplies `corners[].brakedEarlySeconds` where both braking points were measured: positive means earlier, negative means later than the fixed reference, using aligned measured braking-event timing. This is independent of `timeLostSeconds`, which measures performance loss. If its sign agrees with the measured braking-distance error, a cue can use up to half the timing offset, capped at 0.3 s. Distance cues remain capped at 5 m. These are alternative units, not a conversion using the car's current speed. Earlier-braking cues are also supported when repeated measured braking offsets are negative. Without timing data, cues stay in metres. Throttle lift-off timing is not measured by the current contract; the engineer must not invent an exact lift point.
 
 When Aura is unavailable, the server can validate the latest five structured lap objects from this tab and produce a local plan. The UI retains the database failure status; local cues are not acknowledged as graph-backed recommendations and cannot claim persistent graph outcome tracking. When Aura is connected, the graph remains the source of history; changing practice goals supersedes the old pending focus when a new supported recommendation is prepared. A new focus carries its goal type/corner for later scoped outcomes.
 
-The game still needs Yuan's real `race:lap-summary` producer. It currently has a lap timer, but it does not dispatch these structured corner comparisons. The practice page has a separately labeled local example sequence that demonstrates the goal flow without inventing real driving data. No simulator physics or phone message formats change here.
+`race-session.js` now dispatches real `race:lap-summary` events from complete valid circuit laps. It samples the car at 10 Hz, projects onto the 3D centerline relative to the actual start line, and calls shared `LapAnalyzer`. The first clean lap learns/fixes a turn map; subsequent laps use the fastest clean reference available at their start. Reference IDs, geometry/map version, physics configuration hash and fixed fan/trim setup keep comparisons isolated. Epoch observation times come from actual sample capture; timing offsets use the reference's simulation-time trace. No simulator physics or phone message formats change.
+
+
+### Capture and replay contract
+
+`POST /api/race-data/samples` validates at most 20 samples, appends local CSV asynchronously, serializes writes per file, and deduplicates by session sequence number (also after server restart). Path components are strict identifiers. `POST /api/race-data/map` persists a learned map once; `GET /api/race-data/map` reloads by track, geometry and analysis version. These local routes do not call AI or store raw samples in Neo4j. The game retains a bounded local download buffer and reports disk failures visibly.
+
+The shared CSV columns and parser are in `shared/race-telemetry.js`. `race-replay.js` accepts a single chronological session and replays it at recorded speed through `LapAnalyzer` and `RaceEngineer({dataset: "demo"})`. Replay assigns its own session ID and playback observation timestamps, preserving recorded simulation time/position for comparisons. It cannot add lap data to the live dataset. The synthetic fixture is explicitly labeled and used for regression checks; it is not a driving reference for real sessions.
+
+Turn windows are learned from sustained steering/lateral-g runs on the first valid lap and cached. Reported T-numbers are learned simulator sectors, not official Suzuka corner names. Brake events require pedal input above the configured threshold; throttle pickup requires a preceding release and pickup after the minimum-speed sample. Missing events remain null. Sampling limits braking precision to the captured 10 Hz trace. This is coaching evidence, not an optimal racing line or proof that a different brake point will improve time.
