@@ -20,7 +20,27 @@ export class RaceEngineer {
     this.panel.className = "panel";
     this.panel.setAttribute("aria-label", "Race engineer");
     this.panel.innerHTML = `
-      <div class="engineer-heading"><strong>Race engineer</strong>
+      <div class="engineer-heading">
+        <svg class="engineer-avatar" viewBox="0 0 100 112" aria-hidden="true">
+          <circle cx="50" cy="54" r="45" fill="#263d48"/>
+          <path d="M15 112v-7c0-19 16-28 35-28s35 9 35 28v7" fill="#d9e6dc"/>
+          <path d="M40 76v14l10 9 10-9V76" fill="#c88e69"/>
+          <rect x="25" y="21" width="50" height="64" rx="24" fill="#e6b08b"/>
+          <path d="M25 47V31c0-15 11-24 25-24s25 9 25 24v12l-9-15-24 5-12-3z" fill="#252b33"/>
+          <path d="M23 48V36C23 0 77 0 77 36v12" fill="none" stroke="#89dce4" stroke-width="7"/>
+          <rect x="16" y="42" width="13" height="25" rx="6" fill="#14242d" stroke="#89dce4" stroke-width="2"/>
+          <rect x="71" y="42" width="13" height="25" rx="6" fill="#14242d" stroke="#89dce4" stroke-width="2"/>
+          <g class="engineer-eyes" fill="#222b32"><circle cx="39" cy="49" r="3"/><circle cx="61" cy="49" r="3"/></g>
+          <path d="M34 40l9-1m14 0 9 1" stroke="#644538" stroke-width="2" stroke-linecap="round"/>
+          <path d="M49 52l-2 8h5" fill="none" stroke="#bc7d5a" stroke-width="2" stroke-linecap="round"/>
+          <ellipse class="engineer-mouth" cx="50" cy="70" rx="8" ry="2" fill="#704836"/>
+          <path d="M77 63v7c0 6-9 8-17 8" fill="none" stroke="#89dce4" stroke-width="3"/>
+          <rect x="54" y="74" width="12" height="6" rx="3" fill="#14242d"/>
+          <path d="M50 99v13" stroke="#92aaa4" stroke-width="2"/>
+        </svg>
+        <div><strong>Race engineer</strong><span class="engineer-mood">Standing by</span></div>
+      </div>
+      <div class="engineer-controls">
         <select aria-label="Engineer language"><option value="en">English</option><option value="ja">日本語</option></select>
         <button type="button" class="voice-toggle" aria-pressed="false">Voice off</button></div>
       <p class="engineer-tip" aria-live="polite">Drive to receive coaching.</p>
@@ -33,6 +53,7 @@ export class RaceEngineer {
     this.language.value = CONFIG.coach.language;
     this.tip = this.panel.querySelector(".engineer-tip");
     this.status = this.panel.querySelector(".engineer-status");
+    this.mood = this.panel.querySelector(".engineer-mood");
     this.input = this.panel.querySelector("input");
     this.input.maxLength = CONFIG.coach.maxQuestionLength;
     this.voice = new EngineerVoice(this.ask.bind(this), this.setStatus.bind(this));
@@ -77,7 +98,27 @@ export class RaceEngineer {
     window.addEventListener("race:lap-summary", function (event) { this.addLapSummary(event.detail); }.bind(this));
   }
 
-  setStatus(text) { this.status.textContent = text; }
+  setStatus(text) {
+    this.status.textContent = text;
+    this.refreshFace();
+  }
+
+  refreshFace() {
+    let expression = "idle";
+    let label = "Standing by";
+    if (this.voice?.listening) {
+      expression = "listening";
+      label = "Listening to you";
+    } else if (this.voice?.current) {
+      expression = "speaking";
+      label = "On the radio";
+    } else if (this.controller) {
+      expression = "thinking";
+      label = "Reading the drive";
+    }
+    this.panel.dataset.expression = expression;
+    this.mood.textContent = label;
+  }
 
   invalidate() {
     this.generation++;
@@ -124,6 +165,7 @@ export class RaceEngineer {
       this.voice.queue(callout, true);
     }
     this.voice.update(state, throttle, paused);
+    this.refreshFace();
     if (paused) return;
     for (const event of state.events || []) this.events.add(event);
     if (this.controller) return;
@@ -183,7 +225,10 @@ export class RaceEngineer {
       if (generation === this.generation) this.setStatus("Engineer connection unavailable. Driving continues.");
     } finally {
       clearTimeout(timeout);
-      if (generation === this.generation) this.controller = null;
+      if (generation === this.generation) {
+        this.controller = null;
+        this.refreshFace();
+      }
     }
   }
 }
