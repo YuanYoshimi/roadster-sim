@@ -4,11 +4,37 @@
 // Numbers marked "reveal" are Tesla's claims from the Oct 15, 2026 event (not verified).
 
 export const CONFIG = {
+  coachingLoop: {
+    clockSkewMs: 5000,
+    minimumAttempts: 2,
+    maximumStepSeconds: 0.3,
+    strongEvidenceAttempts: 3,
+    minimumLossSeconds: 0.03,
+    meaningfulChangeMeters: 1,
+    meaningfulChangeSeconds: 0.02,
+    rules: [
+      { metric: "brakedEarlyMeters", minimumErrorMeters: 3, maximumStepMeters: 5 },
+      { metric: "brakedEarlyMeters", direction: -1, minimumErrorMeters: 3, maximumStepMeters: 5 },
+      { metric: "throttlePickupLateMeters", minimumErrorMeters: 3, maximumStepMeters: 5 },
+    ],
+  },
+  memory: {
+    queryTimeoutMs: 1500,
+    connectionTimeoutMs: 3000,
+    retryDelayMs: 5000,
+    maxConcurrentRequests: 2,
+    maxCorners: 32,
+    summaryChars: 600,
+    historyLimit: 5,
+    adviceLimit: 3,
+    browserTimeoutMs: 12000,
+  },
   coach: {
     language: "en",
     intervalMs: 8000,
     requestTimeoutMs: 3000,
     maxHistory: 5,
+    conversationTurns: 4,
     maxQuestionLength: 400,
     maxSummaryLength: 3000,
     maxResponseLength: 350,
@@ -158,6 +184,9 @@ export const CONFIG = {
   },
 
   camera: {
+    defaultView: "chase",
+    overheadDistance: 14,
+    overheadHeight: 38,
     chaseDistance: 7.5,
     chaseHeight: 2.6,
     chaseLookAhead: 3.0,

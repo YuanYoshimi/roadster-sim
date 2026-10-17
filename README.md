@@ -10,6 +10,8 @@ Hold your phone sideways and tilt it to steer. Use the on-screen buttons for gas
 
 An AI coach connects live driving state to **ai& Inference**, with spoken tips, English/Japanese feedback and driver questions. See [coach setup and integration](docs/coach-integration.md).
 
+The engineer starts **off** to avoid API spending. Turn it on to ask questions; automatic tips have a separate opt-in. A free voice selector and preview use installed Mac/browser voices without speech API costs.
+
 > Built at the Tokyo Agent Hackathon (+81 Builders), Oct 17 2026.
 > The car is an **original stylized model inspired by the Tesla Roadster**. This project is **not affiliated with Tesla**, and it uses no Tesla assets, logos or 3D models. Physics numbers are based on Tesla's claims at the Oct 15, 2026 reveal, as reported in the press (2 g fan suction, 10 thrusters, over 80 kN, 200 L / 600 L air tanks, 0–60 mph under 0.59 s for the Rocket trim). They are presented as claims, not verified facts. The details are in `CLAUDE.md` under "Reveal facts".
 
@@ -136,3 +138,17 @@ Put `AI_BASE_URL`, `AI_API_KEY` and `AI_MODEL` in `.env` (copy `.env.example`). 
 - The GitHub repo is **private** during prototyping. Make it public before submission:
   `gh repo edit YuanYoshimi/roadster-sim --visibility public --accept-visibility-change-consequences`
 - Record a backup demo video.
+
+### Optional Neo4j race memory
+
+The engineer can remember lap summaries and corner measurements across sessions using Neo4j Aura Free. See [setup and integration](docs/neo4j-memory.md). Run `npm run memory:check` to verify the connection without AI charges, or use the practice page to load isolated examples. The game still runs without Neo4j.
+
+The memory now links one repeated measured issue to a bounded coaching cue and the next comparable attempt's outcome. Try the free loop on `/coach-lab.html`, or run `npm run memory:loop-demo` to verify it in Aura. Actual driving feedback requires Yuan's structured analysis, matching comparison metadata and driving timestamps; examples stay in the separate demo dataset.
+
+### Camera views
+
+In Free drive, use **Camera view** in the upper-right panel to choose Chase, Cockpit, Overhead or the existing Showroom orbit. **C** cycles the same views. Your selection is remembered in this browser; returning to the title screen temporarily uses the showroom camera and restores your selected driving view when you resume.
+
+### Goal-based engineer practice
+
+Tell the engineer “I want to work on corner speed at T4”, or choose a Practice goal. It selects one measured experiment and shows the supporting lap count, speed/offset differences and time loss. Goal plans and updates after measured laps use no AI credits; follow-up questions can use ai&. Exact seconds-based braking cues require the optional measured braking-time offset from analysis. Try **Load local goal examples** on `/coach-lab.html` for a labeled demonstration; real driving still needs Yuan's structured corner-analysis events.

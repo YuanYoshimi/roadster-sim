@@ -72,6 +72,7 @@ const hud = {
   altitude: document.getElementById("altitude"),
   source: document.getElementById("source"),
   levelSelect: document.getElementById("levelSelect"),
+  cameraSelect: document.getElementById("cameraSelect"),
   goalText: document.getElementById("goalText"),
   timer: document.getElementById("timer"),
   help: document.getElementById("help"),
@@ -115,14 +116,13 @@ const tour = new Tour({
 function showTitle() {
   document.getElementById("title").classList.remove("hidden");
   document.body.classList.add("atTitle");
-  cameraModeIndex = CAMERA_MODES.indexOf("showroom");
+  selectCamera("showroom", false);
 }
 
 function hideTitle() {
   document.getElementById("title").classList.add("hidden");
   document.body.classList.remove("atTitle");
-  cameraModeIndex = 0;
-  snapCamera = true;
+  selectCamera(drivingCameraMode, false);
 }
 
 document.getElementById("tourButton").addEventListener("click", function (event) {
@@ -190,8 +190,8 @@ function handleKeyPress(code) {
   } else if (code === "KeyR") {
     restartScenario();
   } else if (code === "KeyC") {
-    cameraModeIndex = (cameraModeIndex + 1) % CAMERA_MODES.length;
-    showMessage("Camera: " + CAMERA_MODES[cameraModeIndex], 1.2);
+    if (document.body.classList.contains("atTitle")) return;
+    selectCamera(CAMERA_MODES[(cameraModeIndex + 1) % CAMERA_MODES.length]);
   } else if (code === "Digit1") {
     setMode("performance");
   } else if (code === "Digit2") {
@@ -447,6 +447,7 @@ async function loadLevel(index) {
   engineer.reset();
   currentLevelIndex = index;
   const entry = levelList[index];
+  engineer.setTrack(entry.file);
   const data = await fetchLevel(entry.file);
   if (level) {
     removeLevel(level);
@@ -482,7 +483,13 @@ hud.levelSelect.addEventListener("change", function () {
 // ---------- Camera ----------
 
 const CAMERA_MODES = ["chase", "cockpit", "overhead", "showroom"];
-let cameraModeIndex = 0;
+let drivingCameraMode = CONFIG.camera.defaultView;
+try {
+  const saved = window.localStorage.getItem("roadster-camera-view");
+  if (CAMERA_MODES.includes(saved)) drivingCameraMode = saved;
+} catch {}
+let cameraModeIndex = CAMERA_MODES.indexOf(drivingCameraMode);
+hud.cameraSelect.value = drivingCameraMode;
 let snapCamera = true; // jump straight to the right spot (after a reset or level load)
 const cameraOffset = new THREE.Vector3(); // camera spot, relative to the car
 const lookAheadOffset = new THREE.Vector3(); // where it looks, relative to the car
@@ -491,6 +498,23 @@ const TURN_AROUND = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 const COCKPIT_TILT = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -0.08); // look slightly down
 let showroomAngle = 0.8;
+
+function selectCamera(mode, remember = true) {
+  if (!CAMERA_MODES.includes(mode)) return;
+  cameraModeIndex = CAMERA_MODES.indexOf(mode);
+  hud.cameraSelect.value = mode;
+  snapCamera = true;
+  if (remember) {
+    drivingCameraMode = mode;
+    try { window.localStorage.setItem("roadster-camera-view", mode); } catch {}
+    showMessage("Camera: " + mode, 1.2);
+  }
+}
+
+hud.cameraSelect.addEventListener("change", function () {
+  selectCamera(hud.cameraSelect.value);
+  hud.cameraSelect.blur(); // return steering and camera shortcuts to the game
+});
 
 function updateCamera(dt) {
   const carPosition = car.model.root.position;
@@ -527,8 +551,8 @@ function updateCamera(dt) {
     let distance = settings.chaseDistance;
     let height = settings.chaseHeight;
     if (mode === "overhead") {
-      distance = 14;
-      height = 38;
+      distance = settings.overheadDistance;
+      height = settings.overheadHeight;
     }
     // We smooth the camera's direction around the car, not its position in the world.
     // That way the camera swings smoothly in turns but never falls behind at high speed.
