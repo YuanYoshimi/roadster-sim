@@ -144,3 +144,7 @@ Put `AI_BASE_URL`, `AI_API_KEY` and `AI_MODEL` in `.env` (copy `.env.example`). 
 The engineer can remember lap summaries and corner measurements across sessions using Neo4j Aura Free. See [setup and integration](docs/neo4j-memory.md). Run `npm run memory:check` to verify the connection without AI charges, or use the practice page to load isolated examples. The game still runs without Neo4j.
 
 The memory now links one repeated measured issue to a bounded coaching cue and the next comparable attempt's outcome. Try the free loop on `/coach-lab.html`, or run `npm run memory:loop-demo` to verify it in Aura. Actual driving feedback requires Yuan's structured analysis, matching comparison metadata and driving timestamps; examples stay in the separate demo dataset.
+
+### Camera views
+
+In Free drive, use **Camera view** in the upper-right panel to choose Chase, Cockpit, Overhead or the existing Showroom orbit. **C** cycles the same views. Your selection is remembered in this browser; returning to the title screen temporarily uses the showroom camera and restores your selected driving view when you resume.

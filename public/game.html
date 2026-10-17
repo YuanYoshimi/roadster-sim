@@ -196,7 +196,14 @@
   </div>
 
   <div id="topRight" class="panel">
-    <select id="levelSelect"></select>
+    <select id="levelSelect" aria-label="Scenario"></select>
+    <label class="label" for="cameraSelect">Camera view · C to cycle</label>
+    <select id="cameraSelect">
+      <option value="chase">Chase — behind the car</option>
+      <option value="cockpit">Cockpit — driver's seat</option>
+      <option value="overhead">Overhead — track overview</option>
+      <option value="showroom">Showroom — orbit the car</option>
+    </select>
     <div id="goalText"></div>
     <div id="timer"></div>
     <div id="help">

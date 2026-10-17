@@ -181,6 +181,9 @@ export const CONFIG = {
   },
 
   camera: {
+    defaultView: "chase",
+    overheadDistance: 14,
+    overheadHeight: 38,
     chaseDistance: 7.5,
     chaseHeight: 2.6,
     chaseLookAhead: 3.0,
