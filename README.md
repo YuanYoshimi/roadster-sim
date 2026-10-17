@@ -8,7 +8,7 @@ Hold your phone sideways and tilt it to steer. Use the on-screen buttons for gas
 - 4 corner thrusters (**LIFT**) let you hop and hover;
 - one tap of **ROLL** does an automatic **mid-air barrel roll** that lands upright.
 
-An AI coach powered by **ai& Inference** is coming next.
+An AI coach connects live driving state to **ai& Inference**, with spoken tips, English/Japanese feedback and driver questions. See [coach setup and integration](docs/coach-integration.md).
 
 > Built at the Tokyo Agent Hackathon (+81 Builders), Oct 17 2026.
 > The car is an **original stylized model inspired by the Tesla Roadster**. This project is **not affiliated with Tesla**, and it uses no Tesla assets, logos or 3D models. Physics numbers are based on Tesla's claims at the Oct 15, 2026 reveal, as reported in the press (2 g fan suction, 10 thrusters, over 80 kN, 200 L / 600 L air tanks, 0–60 mph under 0.59 s for the Rocket trim). They are presented as claims, not verified facts. The details are in `CLAUDE.md` under "Reveal facts".
@@ -17,10 +17,11 @@ An AI coach powered by **ai& Inference** is coming next.
 
 | Works | Not built yet |
 |---|---|
-| Driving, fans (incl. upside down), BOOST, LIFT, barrel ROLL, soft landing, 3 trims | AI coach (Milestone 4) |
+| Driving, fans (incl. upside down), BOOST, LIFT, barrel ROLL, soft landing, 3 trims | Lap/corner analysis integration |
 | Phone yoke over HTTPS tunnel (tilt upright or flat, drag fallback) | AI scenario generator (Milestone 6) |
 | 7 levels: Blank, Reveal Curl, Reveal Jump, **Suzuka (real layout)**, Figure-8 Circuit, Warehouse Parking, Rush-Hour Expressway | |
 | Speed-adaptive racing line, telemetry, sound, title screen, guided demo | |
+| Live ai& engineer, EN/JA tips, optional speech, typed/voice questions | Local Whisper transcription |
 
 ## Setup
 
@@ -107,9 +108,8 @@ The phone shows **tilt OK** (green) when motion data is arriving. If it says **t
 
 ## How we use ai& (sponsor tool)
 
-*Planned, not built yet.* The server will call ai& Inference (OpenAI-compatible) for:
-1. **AI coach:** the game sends a short car-state summary every few seconds and on key events. The model replies with one short driving tip (EN / 日本語), which is shown as a subtitle and read aloud.
-2. **Scenario generator:** you type a situation (for example "rush hour in Shibuya, someone is stealing my parking spot"), and the model returns a level JSON that the server validates and loads.
+1. **AI coach:** the game sends a short car-state summary periodically. ai& returns concise coaching in English or Japanese. Enable Voice on for speech on straights, hold V to ask a question in supported browsers, or type in the engineer panel. Missing credentials or API failure use clearly labeled practice tips. `/coach-lab.html` provides sample inputs. Yuan's lap analysis can supply measured summaries through the hook documented in [coach integration](docs/coach-integration.md).
+2. **Scenario generator (planned):** describe a situation and have the model return a validated level JSON.
 
 Put `AI_BASE_URL`, `AI_API_KEY` and `AI_MODEL` in `.env` (copy `.env.example`). The key stays on the server.
 

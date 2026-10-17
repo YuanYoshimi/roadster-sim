@@ -8,6 +8,8 @@
 
 ## Current status (update as you go)
 
+- **Oct 17 ownership update:** Yuan handles live telemetry and lap/corner analysis; the friend handles AI engineer and voice (milestones 3–4 of the race-engineer prompt, adapted to this JavaScript simulator). The coach uses existing car-state data, `/api/coach`, browser speech, and a `race:lap-summary` event for Yuan's analysis. See `docs/coach-integration.md`. Historical notes below describe the earlier ownership split.
+
 - **Looks pass (Oct 16 evening):** **real Suzuka** (`levels/suzuka.json`, built by `tools/build-suzuka.mjs` from OpenStreetMap + NASA SRTM heights: 5.8 km, real elevation, crossover bridge) with terrain shaped around the track, a **speed-adaptive racing line** (G), and circuit dressing for every `track` (curbs only in corners, gravel traps that slow you, guardrails, pit lane, grandstands with a crowd, woods, horizon hills). Physically based sky, photo textures (Poly Haven CC0), rounded traffic cars. Top speed is now per trim (210 / 230 / 233 mph). The stunt camera that swung out while flying was removed (the user didn't like it). Attribution for OSM/SRTM/Poly Haven is in the README "Credits" section; keep it.
 - **Realism + demo pass:** real tire model (magic formula, load sensitivity, friction circle), power-limited 1 MW motors with regen, TC/ABS/ESC, anti-roll bars, bump stops, aero drag + downforce with an active wing, thrusters use real air mass and pressure (the car gets lighter), 120 Hz physics. New sculpted car model with a full cockpit (yoke + live screens), telemetry panel (T), procedural sound (M to mute), title screen, guided demo tour, presentation mode (P).
 - **Scenarios added:** Figure-8 Circuit (Suzuka-style), Warehouse Store Parking (Costco-style), Rush-Hour Expressway, built from generator props (see Milestone 5).
@@ -81,8 +83,8 @@ Split the work so we rarely edit the same file. **Person A = Yuan, Person B = fr
 |---|---|---|
 | `server.js` | A | Express static server, WebSocket relay, AI proxy endpoints |
 | `public/phone.html`, `public/phone.js` | A | Phone yoke controller |
-| `public/coach.js` | A | Sends car state to the server, shows and speaks tips |
-| `server/ai.js` | A | ai& calls: coach tips + scenario generator + JSON validation |
+| `public/coach.js`, `public/voice.js`, `public/coach.css` | B | AI engineer UI, state adapter, questions and browser speech |
+| `server/ai.js` | B | ai& engineer requests and offline fallback; scenario generation remains planned |
 | `public/game.html`, `public/game.js` | B | Scene, camera, game loop, HUD, level menu |
 | `public/car.js` | B | Car physics: driving, fans, thruster tank, modes |
 | `public/car-model.js` | B | Stylized car mesh (swappable for .glb later) |
