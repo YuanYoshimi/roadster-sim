@@ -1,10 +1,11 @@
 // Neo4j memory. Queries and labels are fixed; client input is always a parameter.
 import neo4j from "neo4j-driver";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { CONFIG } from "../public/config.js";
-import { MEMORY_DEMO_LAPS } from "../public/shared/memory-demo.js";
+import { chooseFocus, comparisonKey, evaluateFocus } from "./coaching-loop.js";
+import { MEMORY_DEMO_LAPS, MEMORY_DEMO_NEXT_LAP } from "../public/shared/memory-demo.js";
 
-const LABELS = ["RaceDriver", "RaceSession", "RaceTrack", "RaceLap", "RaceCorner", "RaceCornerAttempt", "RaceCoaching"];
+const LABELS = ["RaceDriver", "RaceSession", "RaceTrack", "RaceLap", "RaceCorner", "RaceCornerAttempt", "RaceCoaching", "RaceRecommendation", "RaceEvaluation"];
 
 function identifier(value, label) {
   if (typeof value !== "string" || !/^[A-Za-z0-9_-]{1,100}$/.test(value)) throw new Error("Invalid " + label);
@@ -38,11 +39,27 @@ export function cleanLap(raw) {
     corners.push({ name: name, timeLostSeconds: metric(corner.timeLostSeconds, -600, 600),
       brakedEarlyMeters: metric(corner.brakedEarlyMeters, -1000, 1000),
       minimumSpeedDifferenceKmh: metric(corner.minimumSpeedDifferenceKmh, -500, 500),
-      throttlePickupLateMeters: metric(corner.throttlePickupLateMeters, -1000, 1000) });
+      throttlePickupLateMeters: metric(corner.throttlePickupLateMeters, -1000, 1000),
+      observedAt: metric(corner.observedAt, 0, Date.now() + CONFIG.coachingLoop.clockSkewMs) });
+  }
+  let comparison = null;
+  if (raw.comparison !== undefined) {
+    comparison = {};
+    for (const field of ["referenceId", "trackVersion", "physicsVersion", "setupId"]) {
+      comparison[field] = identifier(raw.comparison?.[field], field);
+    }
+  }
+  const startedAt = metric(raw.startedAt, 0, Date.now() + CONFIG.coachingLoop.clockSkewMs);
+  const completedAt = metric(raw.completedAt, 0, Date.now() + CONFIG.coachingLoop.clockSkewMs);
+  if (startedAt !== null && completedAt !== null && completedAt < startedAt) throw new Error("Lap completion precedes its start");
+  for (const corner of corners) {
+    if (corner.observedAt !== null && ((startedAt !== null && corner.observedAt < startedAt) ||
+        (completedAt !== null && corner.observedAt > completedAt))) throw new Error("Corner timestamp is outside the lap");
   }
   if (raw.lapNumber != null && !Number.isInteger(raw.lapNumber)) throw new Error("Invalid lap number");
   return { id: identifier(raw.id, "lap ID"), summary: raw.summary.trim().slice(0, CONFIG.coach.maxSummaryLength),
-    lapNumber: metric(raw.lapNumber, 1, 100000), lapTimeSeconds: metric(raw.lapTimeSeconds, 0.01, 86400), corners: corners };
+    lapNumber: metric(raw.lapNumber, 1, 100000), lapTimeSeconds: metric(raw.lapTimeSeconds, 0.01, 86400), corners: corners,
+    startedAt: startedAt, completedAt: completedAt, valid: raw.valid === true, comparison: comparison, comparisonKey: comparisonKey(comparison) };
 }
 
 function keys(scope) {
@@ -129,27 +146,35 @@ export class RaceMemory {
   async saveLap(scope, lap) {
     const p = keys(scope);
     return this.perform(async function () {
-      await this.query(`
+      const saved = await this.query(`
         MERGE (d:RaceDriver {id: $driverKey}) SET d.dataset = $dataset
         MERGE (t:RaceTrack {id: $trackKey}) SET t.name = $trackId, t.dataset = $dataset
         MERGE (s:RaceSession {id: $sessionKey}) SET s.mode = $mode, s.dataset = $dataset
         MERGE (d)-[:DROVE]->(s) MERGE (s)-[:ON_TRACK]->(t)
-        MERGE (l:RaceLap {id: $lapKey}) ON CREATE SET l.createdAt = $now
-        SET l.summary = $summary, l.lapNumber = $lapNumber, l.lapTimeSeconds = $lapTimeSeconds, l.dataset = $dataset
+        MERGE (l:RaceLap {id: $lapKey})
+        ON CREATE SET l.createdAt = $now, l.payloadHash = $payloadHash, l.summary = $summary, l.lapNumber = $lapNumber, l.lapTimeSeconds = $lapTimeSeconds, l.dataset = $dataset,
+          l.valid = $valid, l.comparisonKey = $comparisonKey, l.startedAt = $startedAt, l.completedAt = $completedAt
         MERGE (s)-[:HAS_LAP]->(l)
-        WITH l, t
-        UNWIND $corners AS item
+        WITH l, t WHERE l.payloadHash = $payloadHash
+        CALL {
+        WITH l, t UNWIND $corners AS item
         MERGE (c:RaceCorner {id: $trackKey + ':' + item.name}) SET c.name = item.name
         MERGE (t)-[:HAS_CORNER]->(c)
-        MERGE (a:RaceCornerAttempt {id: $lapKey + ':' + item.name}) SET a += item
-        MERGE (l)-[:HAS_CORNER]->(a) MERGE (a)-[:AT_CORNER]->(c)`,
-      { ...p, ...lap, lapKey: p.sessionKey + ":" + lap.id, now: Date.now() });
-      return { lapId: lap.id };
+        MERGE (a:RaceCornerAttempt {id: $lapKey + ':' + item.name}) ON CREATE SET a += item
+        MERGE (l)-[:HAS_CORNER]->(a) MERGE (a)-[:AT_CORNER]->(c)
+        RETURN count(a) AS attempts
+        }
+        RETURN l.id AS id`,
+      { ...p, ...lap, lapKey: p.sessionKey + ":" + lap.id,
+        payloadHash: createHash("sha256").update(JSON.stringify(lap)).digest("hex"), now: Date.now() });
+      if (!saved.records.length) return { lapId: lap.id, stored: false, reason: "lap_id_conflict" };
+      return { lapId: lap.id, stored: true, outcome: await this.evaluateRecommendation(scope) };
     }.bind(this));
   }
 
   async context(scope) {
     return this.perform(async function () {
+      await this.evaluateRecommendation(scope);
       const result = await this.query(`
         MATCH (:RaceDriver {id: $driverKey})-[:DROVE]->(s:RaceSession)-[:ON_TRACK]->(:RaceTrack {id: $trackKey})
         WHERE s.mode = $mode
@@ -160,9 +185,10 @@ export class RaceMemory {
           OPTIONAL MATCH (l)-[:HAS_CORNER]->(a:RaceCornerAttempt)-[:AT_CORNER]->(c:RaceCorner)
           WITH l, collect(CASE WHEN c IS NOT NULL THEN {name: c.name, timeLostSeconds: a.timeLostSeconds,
             brakedEarlyMeters: a.brakedEarlyMeters, minimumSpeedDifferenceKmh: a.minimumSpeedDifferenceKmh,
-            throttlePickupLateMeters: a.throttlePickupLateMeters} END) AS corners
+            throttlePickupLateMeters: a.throttlePickupLateMeters, observedAt: a.observedAt} END) AS corners
           ORDER BY l.createdAt DESC, l.id DESC
-          RETURN collect({id: l.id, summary: left(l.summary, $summaryChars), lapNumber: l.lapNumber, corners: corners}) AS laps
+          RETURN collect({id: l.id, summary: left(l.summary, $summaryChars), lapNumber: l.lapNumber,
+            createdAt: l.createdAt, startedAt: l.startedAt, completedAt: l.completedAt, valid: l.valid, comparisonKey: l.comparisonKey, corners: corners}) AS laps
         }
         CALL {
           WITH sessions UNWIND sessions AS s MATCH (s)-[:RECEIVED]->(tip:RaceCoaching)
@@ -172,8 +198,110 @@ export class RaceMemory {
         RETURN laps, advice`, { ...keys(scope), historyLimit: neo4j.int(CONFIG.memory.historyLimit),
         summaryChars: neo4j.int(CONFIG.memory.summaryChars), adviceLimit: neo4j.int(CONFIG.memory.adviceLimit) }, true);
       const record = result.records[0];
-      return summarizeMemory(record ? record.get("laps") : [], record ? record.get("advice") : [], scope.dataset);
+      const data = summarizeMemory(record ? record.get("laps") : [], record ? record.get("advice") : [], scope.dataset);
+      const coaching = await this.loadCoaching(scope);
+      data.coaching = { focus: chooseFocus(data.recentLaps, coaching.focus), outcome: coaching.outcome };
+      return data;
     }.bind(this));
+  }
+
+  async loadCoaching(scope) {
+    const result = await this.query(`
+      MATCH (:RaceDriver {id: $driverKey})-[:DROVE]->(s:RaceSession)-[:ON_TRACK]->(:RaceTrack {id: $trackKey})
+      WHERE s.mode = $mode
+      WITH collect(s) AS sessions
+      CALL {
+        WITH sessions UNWIND sessions AS s MATCH (s)-[:HAS_RECOMMENDATION]->(r:RaceRecommendation)
+        WHERE r.status = 'pending' AND r.shownAt IS NOT NULL
+        WITH DISTINCT r ORDER BY r.shownAt ASC, r.id ASC LIMIT 1
+        RETURN head(collect(properties(r))) AS focus
+      }
+      CALL {
+        WITH sessions UNWIND sessions AS s
+        MATCH (s)-[:HAS_RECOMMENDATION]->(:RaceRecommendation)-[:HAS_OUTCOME]->(e:RaceEvaluation)
+        WITH DISTINCT e ORDER BY e.createdAt DESC, e.id DESC LIMIT 1
+        RETURN head(collect(properties(e))) AS outcome
+      }
+      RETURN focus, outcome`, keys(scope), true);
+    const row = result.records[0];
+    return { focus: row?.get("focus") || null, outcome: row?.get("outcome") || null };
+  }
+
+  async prepareRecommendation(scope, focus) {
+    if (!focus) return { status: "connected", data: null };
+    if (focus.status === "pending") return { status: "connected", data: focus };
+    return this.perform(async function () {
+      // Neo4j properties contain scalars; evidence is linked to its original lap and attempt nodes.
+      const properties = { ...focus, status: "proposed", createdAt: Date.now() };
+      delete properties.evidence;
+      const result = await this.query(`
+        MERGE (d:RaceDriver {id: $driverKey}) SET d.dataset = $dataset
+        MERGE (t:RaceTrack {id: $trackKey}) SET t.name = $trackId, t.dataset = $dataset
+        MERGE (s:RaceSession {id: $sessionKey}) SET s.mode = $mode, s.dataset = $dataset
+        MERGE (d)-[:DROVE]->(s) MERGE (s)-[:ON_TRACK]->(t)
+        WITH s, t MATCH (baseline:RaceLap {id: $baselineLapId})
+        MERGE (r:RaceRecommendation {id: $id}) ON CREATE SET r += $properties
+        MERGE (s)-[:HAS_RECOMMENDATION]->(r) MERGE (r)-[:BASED_ON]->(baseline)
+        WITH r, t
+        MATCH (t)-[:HAS_CORNER]->(c:RaceCorner {name: $corner})
+        MERGE (r)-[:TARGETS]->(c)
+        WITH r UNWIND $evidenceLapIds AS lapId
+        MATCH (l:RaceLap {id: lapId})-[:HAS_CORNER]->(a:RaceCornerAttempt {name: $corner})
+        MERGE (r)-[:SUPPORTED_BY]->(a)
+        RETURN DISTINCT properties(r) AS focus`, { ...keys(scope), ...focus, properties: properties });
+      const saved = result.records[0]?.get("focus");
+      return saved && ["proposed", "pending"].includes(saved.status) ? saved : null;
+    }.bind(this));
+  }
+
+  async acknowledgeRecommendation(scope, id) {
+    return this.perform(async function () {
+      const result = await this.query(`
+        MATCH (:RaceDriver {id: $driverKey})-[:DROVE]->(s:RaceSession)-[:ON_TRACK]->(:RaceTrack {id: $trackKey})
+        MATCH (s)-[:HAS_RECOMMENDATION]->(r:RaceRecommendation {id: $id})
+        WHERE s.mode = $mode AND r.status IN ['proposed', 'pending']
+        SET r.status = 'pending', r.shownAt = coalesce(r.shownAt, $now)
+        RETURN r.id AS id`, { ...keys(scope), id: id, now: Date.now() });
+      return { acknowledged: result.records.length > 0 };
+    }.bind(this));
+  }
+
+  async dismissRecommendation(scope, id) {
+    return this.perform(async function () {
+      const result = await this.query(`
+        MATCH (:RaceDriver {id: $driverKey})-[:DROVE]->(s:RaceSession)-[:ON_TRACK]->(:RaceTrack {id: $trackKey})
+        MATCH (s)-[:HAS_RECOMMENDATION]->(r:RaceRecommendation {id: $id})
+        WHERE s.mode = $mode AND r.status IN ['proposed', 'pending']
+        SET r.status = 'dismissed', r.dismissedAt = $now RETURN r.id AS id`, { ...keys(scope), id: id, now: Date.now() });
+      return { dismissed: result.records.length > 0, focus: null };
+    }.bind(this));
+  }
+
+  async evaluateRecommendation(scope) {
+    const coaching = await this.loadCoaching(scope);
+    const focus = coaching.focus;
+    if (!focus) return coaching.outcome;
+    // Select the FIRST subsequent comparable attempt, even if several laps arrived before a request.
+    const result = await this.query(`
+      MATCH (:RaceDriver {id: $driverKey})-[:DROVE]->(s:RaceSession)-[:ON_TRACK]->(:RaceTrack {id: $trackKey})
+      MATCH (s)-[:HAS_LAP]->(l:RaceLap)-[:HAS_CORNER]->(a:RaceCornerAttempt {name: $corner})
+      WHERE s.mode = $mode AND l.valid = true AND l.comparisonKey = $comparisonKey
+        AND l.createdAt > $shownAt AND l.id <> $baselineLapId AND a[$metric] IS NOT NULL AND a.timeLostSeconds IS NOT NULL
+        AND (a.observedAt > $shownAt OR (a.observedAt IS NULL AND l.startedAt > $shownAt))
+      WITH l, a ORDER BY coalesce(a.observedAt, l.startedAt) ASC, l.createdAt ASC, l.id ASC LIMIT 1
+      RETURN {id: l.id, valid: l.valid, comparisonKey: l.comparisonKey, createdAt: l.createdAt, startedAt: l.startedAt,
+        corners: [properties(a)]} AS lap`, { ...keys(scope), ...focus }, true);
+    const lap = result.records[0]?.get("lap");
+    const outcome = evaluateFocus(focus, lap);
+    if (!outcome) return coaching.outcome;
+    const saved = await this.query(`
+      MATCH (r:RaceRecommendation {id: $recommendationId}), (l:RaceLap {id: $lapId})
+      WHERE r.status = 'pending'
+      MERGE (e:RaceEvaluation {id: $id}) ON CREATE SET e += $outcome, e.createdAt = $now
+      SET r.status = 'evaluated'
+      MERGE (r)-[:HAS_OUTCOME]->(e) MERGE (e)-[:OBSERVED_ON]->(l)
+      RETURN properties(e) AS outcome`, { ...outcome, outcome: outcome, now: Date.now() });
+    return saved.records[0]?.get("outcome") || coaching.outcome;
   }
 
   async saveCoaching(scope, tip, question) {
@@ -182,9 +310,12 @@ export class RaceMemory {
         MERGE (t:RaceTrack {id: $trackKey}) SET t.name = $trackId, t.dataset = $dataset
         MERGE (s:RaceSession {id: $sessionKey}) SET s.mode = $mode, s.dataset = $dataset
         MERGE (d)-[:DROVE]->(s) MERGE (s)-[:ON_TRACK]->(t)
-        CREATE (tip:RaceCoaching {id: $id, text: $text, source: $source, question: $question, createdAt: $now})
-        CREATE (s)-[:RECEIVED]->(tip)`, { ...keys(scope), id: randomUUID(), text: tip.text,
-        source: tip.source, question: question, now: Date.now() });
+        MERGE (tip:RaceCoaching {id: $id})
+        ON CREATE SET tip.text = $text, tip.source = $source, tip.question = $question, tip.createdAt = $now
+        MERGE (s)-[:RECEIVED]->(tip)
+        WITH tip OPTIONAL MATCH (r:RaceRecommendation {id: $recommendationId})
+        FOREACH (item IN CASE WHEN r IS NULL THEN [] ELSE [r] END | MERGE (tip)-[:COMMUNICATED]->(item))`, { ...keys(scope), id: tip.analysisId ? keys(scope).sessionKey + ":analysis:" + tip.analysisId : randomUUID(), text: tip.text,
+        source: tip.source, question: question, recommendationId: tip.coaching?.focus?.id || "", now: Date.now() });
       return true;
     }.bind(this));
   }
@@ -204,6 +335,43 @@ export function installMemoryRoutes(app, memory) {
     catch (error) { res.status(400).json({ error: error.message }); return; }
     res.json(await memory.saveLap(scope, lap));
   });
+  app.post("/api/memory/focus", async function (req, res) {
+    if (req.body?.enabled !== true) { res.status(403).json({ error: "engineer_disabled" }); return; }
+    let scope;
+    try { scope = cleanMemoryScope(req.body.scope); }
+    catch (error) { res.status(400).json({ error: error.message }); return; }
+    const context = await memory.context(scope);
+    if (context.status !== "connected") { res.json(context); return; }
+    const prepared = await memory.prepareRecommendation(scope, context.data.coaching.focus);
+    res.json({ status: prepared.status, data: { focus: prepared.data, outcome: context.data.coaching.outcome } });
+  });
+  app.post("/api/memory/focus/ack", async function (req, res) {
+    if (req.body?.enabled !== true) { res.status(403).json({ error: "engineer_disabled" }); return; }
+    let scope;
+    try {
+      scope = cleanMemoryScope(req.body.scope);
+      if (typeof req.body.id !== "string" || req.body.id.length > 1000 || !req.body.id) throw new Error("Invalid recommendation ID");
+    } catch (error) { res.status(400).json({ error: error.message }); return; }
+    res.json(await memory.acknowledgeRecommendation(scope, req.body.id));
+  });
+  app.post("/api/memory/focus/dismiss", async function (req, res) {
+    if (req.body?.enabled !== true) { res.status(403).json({ error: "engineer_disabled" }); return; }
+    let scope;
+    try {
+      scope = cleanMemoryScope(req.body.scope);
+      if (typeof req.body.id !== "string" || req.body.id.length > 1000 || !req.body.id) throw new Error("Invalid recommendation ID");
+    } catch (error) { res.status(400).json({ error: error.message }); return; }
+    res.json(await memory.dismissRecommendation(scope, req.body.id));
+  });
+  app.post("/api/memory/demo-next", async function (req, res) {
+    if (req.body?.enabled !== true) { res.status(403).json({ error: "engineer_disabled" }); return; }
+    let scope;
+    try {
+      scope = cleanMemoryScope(req.body.scope);
+      if (scope.dataset !== "demo") throw new Error("Examples require the demo dataset");
+    } catch (error) { res.status(400).json({ error: error.message }); return; }
+    res.json(await memory.saveLap(scope, cleanLap({ ...MEMORY_DEMO_NEXT_LAP, startedAt: Date.now(), completedAt: Date.now() })));
+  });
   app.post("/api/memory/demo", async function (req, res) {
     if (req.body?.enabled !== true) { res.status(403).json({ error: "engineer_disabled" }); return; }
     let scope;
@@ -211,7 +379,7 @@ export function installMemoryRoutes(app, memory) {
     catch (error) { res.status(400).json({ error: error.message }); return; }
     for (const raw of MEMORY_DEMO_LAPS) {
       const result = await memory.saveLap(scope, cleanLap(raw));
-      if (result.status !== "connected") { res.json(result); return; }
+      if (result.status !== "connected" || result.data?.stored === false) { res.json(result); return; }
     }
     res.json(await memory.context(scope));
   });

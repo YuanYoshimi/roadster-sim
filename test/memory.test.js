@@ -66,7 +66,7 @@ test("graph context is bounded, scoped and aggregates only measured positive los
 test("coaching can create its scoped session before the first lap", async function () {
   let saved;
   const memory = fakeMemory(async function (query, parameters) {
-    if (query.includes("CREATE (tip:RaceCoaching")) saved = { query, parameters };
+    if (query.includes("MERGE (tip:RaceCoaching")) saved = { query, parameters };
     return { records: [] };
   });
   await memory.saveCoaching(scope, { text: "Advice", source: "ai" }, "Question");

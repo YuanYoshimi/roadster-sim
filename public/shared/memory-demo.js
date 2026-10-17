@@ -1,6 +1,11 @@
 // Synthetic examples only. Never insert these into the live driving dataset.
+const comparison = { referenceId: "example-reference-v1", trackVersion: "suzuka-example-v1", physicsVersion: "example-v1", setupId: "example-fixed-setup" };
 export const MEMORY_DEMO_LAPS = [
-  { id: "example-lap-1", lapNumber: 1, summary: "EXAMPLE lap 1: T4 lost 0.35 s; braked 12 m early and minimum speed was 6 km/h below reference.", corners: [{ name: "T4", timeLostSeconds: 0.35, brakedEarlyMeters: 12, minimumSpeedDifferenceKmh: -6 }] },
-  { id: "example-lap-2", lapNumber: 2, summary: "EXAMPLE lap 2: T4 lost 0.22 s; braked 8 m early and minimum speed was 4 km/h below reference.", corners: [{ name: "T4", timeLostSeconds: 0.22, brakedEarlyMeters: 8, minimumSpeedDifferenceKmh: -4 }] },
-  { id: "example-lap-3", lapNumber: 3, summary: "EXAMPLE lap 3: T4 lost 0.10 s; braked 4 m early and minimum speed was 2 km/h below reference.", corners: [{ name: "T4", timeLostSeconds: 0.10, brakedEarlyMeters: 4, minimumSpeedDifferenceKmh: -2 }] },
+  { valid: true, comparison: comparison, id: "example-lap-1", lapNumber: 1, summary: "EXAMPLE lap 1: T4 lost 0.35 s; braked 12 m early and minimum speed was 6 km/h below reference.", corners: [{ name: "T4", timeLostSeconds: 0.35, brakedEarlyMeters: 12, minimumSpeedDifferenceKmh: -6 }] },
+  { valid: true, comparison: comparison, id: "example-lap-2", lapNumber: 2, summary: "EXAMPLE lap 2: T4 lost 0.22 s; braked 8 m early and minimum speed was 4 km/h below reference.", corners: [{ name: "T4", timeLostSeconds: 0.22, brakedEarlyMeters: 8, minimumSpeedDifferenceKmh: -4 }] },
+  { valid: true, comparison: comparison, id: "example-lap-3", lapNumber: 3, summary: "EXAMPLE lap 3: T4 lost 0.10 s; braked 4 m early and minimum speed was 2 km/h below reference.", corners: [{ name: "T4", timeLostSeconds: 0.10, brakedEarlyMeters: 4, minimumSpeedDifferenceKmh: -2 }] },
 ];
+
+export const MEMORY_DEMO_NEXT_LAP = { valid: true, comparison: comparison, id: "example-lap-4", lapNumber: 4,
+  summary: "EXAMPLE lap 4: T4 lost 0.04 s; braked 2 m early. Same reference and conditions.",
+  corners: [{ name: "T4", timeLostSeconds: 0.04, brakedEarlyMeters: 2, minimumSpeedDifferenceKmh: -1 }] };

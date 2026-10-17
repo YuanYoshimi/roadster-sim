@@ -43,6 +43,7 @@ test("engineer defaults off, requires explicit automatic tips, and ignores late 
     assert.equal(calls, 0, "power on alone must not start recurring requests");
     engineer.autoTips.checked = true;
     engineer.update(SAMPLE_STATE, 1, false);
+    await new Promise(setImmediate);
     assert.equal(calls, 1);
     engineer.setPower(false);
     assert.equal(signal.aborted, true);
@@ -104,5 +105,45 @@ test("free voice preview uses the selected installed voice without calling an AP
   } finally {
     delete globalThis.window;
     delete globalThis.SpeechSynthesisUtterance;
+  }
+});
+
+test("a measured cue is acknowledged only while visible and enabled; power off aborts the acknowledgment", async function () {
+  const originalFetch = globalThis.fetch;
+  let calls = 0, signal, finish;
+  globalThis.document = { hidden: true, createElement: function () { return new Element(); }, body: { appendChild: function () {} } };
+  globalThis.window = { addEventListener: function () {}, speechSynthesis: { cancel: function () {}, getVoices: function () { return []; } } };
+  globalThis.fetch = function (url, options) {
+    calls++;
+    assert.equal(url, "/api/memory/focus/ack");
+    assert.equal(JSON.parse(options.body).enabled, true);
+    signal = options.signal;
+    return new Promise(function (resolve) { finish = resolve; });
+  };
+  try {
+    const engineer = new RaceEngineer();
+    const focus = { id: "proposed-focus", status: "proposed", corner: "T4", metric: "brakedEarlyMeters", actionMeters: 2,
+      evidenceLapIds: ["lap-1", "lap-2"], confidence: "moderate", meanLossSeconds: 0.2 };
+    engineer.showCoaching({ focus });
+    assert.equal(calls, 0);
+    engineer.setPower(true);
+    engineer.showCoaching({ focus });
+    assert.equal(calls, 0, "a background document cannot mark the cue shown");
+    document.hidden = false;
+    engineer.showCoaching({ focus });
+    assert.equal(calls, 1);
+    assert.match(engineer.focusAction.textContent, /2 m later/);
+    assert.equal(engineer.coachingPanel.hidden, false);
+    engineer.setPower(false);
+    assert.equal(signal.aborted, true);
+    assert.equal(engineer.coachingPanel.hidden, true);
+    finish({ ok: true, json: async function () { return { status: "connected", data: { acknowledged: true } }; } });
+    await engineer.pendingAcknowledgment;
+    assert.equal(engineer.memoryControllers.size, 0);
+    assert.equal(engineer.enabled, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+    delete globalThis.document;
+    delete globalThis.window;
   }
 });

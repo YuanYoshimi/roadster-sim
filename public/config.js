@@ -4,6 +4,18 @@
 // Numbers marked "reveal" are Tesla's claims from the Oct 15, 2026 event (not verified).
 
 export const CONFIG = {
+  coachingLoop: {
+    clockSkewMs: 5000,
+    minimumAttempts: 2,
+    strongEvidenceAttempts: 3,
+    minimumLossSeconds: 0.03,
+    meaningfulChangeMeters: 1,
+    meaningfulChangeSeconds: 0.02,
+    rules: [
+      { metric: "brakedEarlyMeters", minimumErrorMeters: 3, maximumStepMeters: 5 },
+      { metric: "throttlePickupLateMeters", minimumErrorMeters: 3, maximumStepMeters: 5 },
+    ],
+  },
   memory: {
     queryTimeoutMs: 1500,
     connectionTimeoutMs: 3000,
