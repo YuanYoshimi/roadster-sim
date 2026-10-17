@@ -10,6 +10,8 @@ Hold your phone sideways and tilt it to steer. Use the on-screen buttons for gas
 
 An AI coach connects live driving state to **ai& Inference**, with spoken tips, English/Japanese feedback and driver questions. See [coach setup and integration](docs/coach-integration.md).
 
+The engineer starts **off** to avoid API spending. Turn it on to ask questions; automatic tips have a separate opt-in. A free voice selector and preview use installed Mac/browser voices without speech API costs.
+
 > Built at the Tokyo Agent Hackathon (+81 Builders), Oct 17 2026.
 > The car is an **original stylized model inspired by the Tesla Roadster**. This project is **not affiliated with Tesla**, and it uses no Tesla assets, logos or 3D models. Physics numbers are based on Tesla's claims at the Oct 15, 2026 reveal, as reported in the press (2 g fan suction, 10 thrusters, over 80 kN, 200 L / 600 L air tanks, 0–60 mph under 0.59 s for the Rocket trim). They are presented as claims, not verified facts. The details are in `CLAUDE.md` under "Reveal facts".
 

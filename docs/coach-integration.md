@@ -6,7 +6,11 @@ Yuan owns the simulator telemetry and lap/corner analysis. The friend owns the A
 
 Copy `.env.example` to `.env` and fill in `AI_BASE_URL`, `AI_API_KEY`, and `AI_MODEL` from ai&. The base URL should include the API version, for example `https://api.aiand.com/v1`. Restart `npm start` after changing `.env`. Credentials stay on the server and `.env` is ignored by Git.
 
-Open `/game.html`, choose Free drive, and watch the Race engineer panel. Click Voice on for spoken tips. Click Talk to engineer, allow microphone access, speak, then click Finish talking. Alternatively, hold V and release to submit. Starting a conversation enables spoken replies; turning Voice off stops microphone capture and cancels the recording. The panel shows the transcribed question. You can always type a question. Speech recognition depends on the browser and may send audio to its speech service; this prototype does not use local Whisper. Speech is off by default. Routine speech waits until stopped or on a straight with throttle, pauses during corners, and expires instead of building a backlog.
+Open `/game.html`, choose Free drive, and watch the Race engineer panel. **The engineer starts off, and automatic tips start unchecked.** Turn Engineer on to ask questions. Automatic tips require a separate opt-in because they make recurring paid AI calls. Turning Engineer off cancels browser requests, microphone capture and speech, clears queued questions, and prevents further AI requests from that tab. The server aborts upstream work when the browser disconnects. A request already received by the provider may still incur charges. Older tabs without explicit opt-in are rejected by the server.
+
+Choose an installed English or Japanese voice in Mac / browser voice and use **Preview voice · free** to compare voices without any AI request, even while the engineer is off. No paid speech service is used. Available voices depend on the browser and installed system voices; additional voices can be downloaded through macOS Accessibility > Read & Speak (Spoken Content on older macOS versions).
+
+Click Voice on for spoken tips. Click Talk to engineer, allow microphone access, speak, then click Finish talking. Alternatively, hold V and release to submit. Starting a conversation enables spoken replies; turning Voice off stops microphone capture and cancels the recording. The panel shows the transcribed question. You can always type a question. Speech recognition depends on the browser and may send audio to its speech service; this prototype does not use local Whisper. Routine speech waits until stopped or on a straight with throttle, pauses during corners, and expires instead of building a backlog.
 
 Open `/coach-lab.html` to test with clearly labeled sample states without driving. Practice tips are rule based, not AI, and labeled as such. Missing settings, busy/failed providers and timeouts keep the game running. Question fallback explicitly reports that AI is unavailable. Crash, flip and empty-tank callouts are immediate rules and may interrupt speech. Resetting a scenario discards old context and replies.
 
@@ -26,10 +30,10 @@ The existing shared state/phone protocol is unchanged. The small `game.js` adapt
 
 ## Server contract
 
-`POST /api/coach` accepts either the original car-state object or:
+`POST /api/coach` requires explicit `enabled: true` and accepts:
 
 ```js
-{ state: carState, lang: "en", question: "Where am I losing time?", history: ["Lap 3: …"] }
+{ enabled: true, state: carState, lang: "en", question: "Where am I losing time?", history: ["Lap 3: …"] }
 ```
 
 Response: `{ type: "tip", text, lang, source: "ai" | "fallback", latencyMs, reason? }`. Bad state returns HTTP 400. No credentials are returned. The server calls the OpenAI-compatible `/chat/completions` endpoint using native Node fetch. Tunables, request timeout, speech timing, language default and input limits are in `public/config.js` under `coach`.

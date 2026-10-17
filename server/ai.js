@@ -66,6 +66,7 @@ export async function getCoachTip(request, options = {}) {
   const fetcher = options.fetch || fetch;
   const started = performance.now();
   const fallback = fallbackTip(request);
+  if (options.signal?.aborted) return { ...fallback, reason: "cancelled" };
   if (!env.AI_BASE_URL || !env.AI_API_KEY || !env.AI_MODEL) {
     fallback.reason = "not_configured";
     return fallback;
@@ -76,13 +77,14 @@ export async function getCoachTip(request, options = {}) {
   }
   activeRequests++;
   const controller = new AbortController();
+  const signal = options.signal ? AbortSignal.any([controller.signal, options.signal]) : controller.signal;
   const timeout = setTimeout(function () { controller.abort(); }, CONFIG.coach.requestTimeoutMs);
   try {
     const language = request.lang === "ja" ? "Japanese" : "English";
     const response = await fetcher(env.AI_BASE_URL.replace(/\/+$/, "") + "/chat/completions", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: "Bearer " + env.AI_API_KEY },
-      signal: controller.signal,
+      signal: signal,
       body: JSON.stringify({
         model: env.AI_MODEL,
         max_tokens: CONFIG.coach.maxTokens,
@@ -99,7 +101,7 @@ export async function getCoachTip(request, options = {}) {
     return { type: "tip", text: text, lang: request.lang, source: "ai", latencyMs: Math.round(performance.now() - started) };
   } catch {
     // Never log provider bodies or credentials. AI failures must not stop the game.
-    fallback.reason = controller.signal.aborted ? "timeout" : "provider_error";
+    fallback.reason = options.signal?.aborted ? "cancelled" : controller.signal.aborted ? "timeout" : "provider_error";
     fallback.latencyMs = Math.round(performance.now() - started);
     return fallback;
   } finally {
@@ -111,6 +113,11 @@ export async function getCoachTip(request, options = {}) {
 
 export function installCoachRoutes(app) {
   app.post("/api/coach", async function (req, res) {
+    // Old tabs must not keep spending credits after the default-off update.
+    if (req.body?.enabled !== true) {
+      res.status(403).json({ error: "engineer_disabled" });
+      return;
+    }
     let request;
     try {
       request = cleanCoachRequest(req.body);
@@ -118,6 +125,13 @@ export function installCoachRoutes(app) {
       res.status(400).json({ error: error.message });
       return;
     }
-    res.json(await getCoachTip(request));
+    const controller = new AbortController();
+    function disconnect() {
+      if (!res.writableEnded) controller.abort();
+    }
+    res.on("close", disconnect);
+    const tip = await getCoachTip(request, { signal: controller.signal });
+    res.removeListener("close", disconnect);
+    if (!res.destroyed) res.json(tip);
   });
 }

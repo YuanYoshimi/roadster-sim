@@ -15,6 +15,7 @@ export function instantCallout(events, lang) {
 export class EngineerVoice {
   constructor(onQuestion, onStatus) {
     this.enabled = false;
+    this.voiceName = "";
     this.pending = null;
     this.current = null;
     this.utterance = null;
@@ -91,10 +92,25 @@ export class EngineerVoice {
     }
     if (paused || this.listening || (!safe && !message.urgent)) return;
     this.pending = null;
+    this.speak(message);
+  }
+
+  preview(lang) {
+    if (!("speechSynthesis" in window) || this.listening) return;
+    this.clear();
+    this.speak({ text: lang === "ja" ? "無線チェック。レースエンジニアの準備ができています。" : "Radio check. Your race engineer is ready.", lang: lang, expires: performance.now() + CONFIG.coach.tipLifetimeMs });
+  }
+
+  speak(message) {
     this.current = message;
     const speech = new SpeechSynthesisUtterance(message.text);
     this.utterance = speech;
     speech.lang = message.lang === "ja" ? "ja-JP" : "en-US";
+    const availableVoices = window.speechSynthesis.getVoices?.() || [];
+    const selectedVoice = availableVoices.find(function (voice) {
+      return (voice.voiceURI || voice.name) === this.voiceName && voice.lang.startsWith(message.lang);
+    }.bind(this));
+    if (selectedVoice) speech.voice = selectedVoice;
     speech.rate = CONFIG.coach.speechRate;
     speech.onend = speech.onerror = function () {
       if (this.utterance === speech) {

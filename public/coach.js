@@ -4,6 +4,7 @@ import { EngineerVoice, instantCallout } from "./voice.js";
 
 export class RaceEngineer {
   constructor() {
+    this.enabled = false;
     this.state = null;
     this.history = [];
     this.events = new Set();
@@ -40,9 +41,15 @@ export class RaceEngineer {
         </svg>
         <div><strong>Race engineer</strong><span class="engineer-mood">Standing by</span></div>
       </div>
+      <button type="button" class="engineer-power" aria-pressed="false">Engineer off</button>
       <div class="engineer-controls">
         <select aria-label="Engineer language"><option value="en">English</option><option value="ja">日本語</option></select>
         <button type="button" class="voice-toggle" aria-pressed="false">Voice off</button></div>
+      <label class="engineer-voice-label">Mac / browser voice
+        <select class="engineer-voice" aria-label="Speaking voice"><option value="">Device default</option></select>
+      </label>
+      <button type="button" class="voice-preview">Preview voice · free</button>
+      <label class="engineer-auto"><input type="checkbox"> Automatic tips (uses AI credits)</label>
       <p class="engineer-tip" aria-live="polite">Drive to receive coaching.</p>
       <div class="engineer-status" role="status">Waiting for driving data</div>
       <p class="engineer-question" hidden></p>
@@ -57,9 +64,34 @@ export class RaceEngineer {
     this.mood = this.panel.querySelector(".engineer-mood");
     this.questionText = this.panel.querySelector(".engineer-question");
     this.talk = this.panel.querySelector(".engineer-talk");
-    this.input = this.panel.querySelector("input");
+    this.power = this.panel.querySelector(".engineer-power");
+    this.autoTips = this.panel.querySelector(".engineer-auto input");
+    this.sendButton = this.panel.querySelector("form button");
+    this.voiceChoice = this.panel.querySelector(".engineer-voice");
+    this.previewButton = this.panel.querySelector(".voice-preview");
+    this.input = this.panel.querySelector("form input");
     this.input.maxLength = CONFIG.coach.maxQuestionLength;
     this.voice = new EngineerVoice(this.ask.bind(this), this.setStatus.bind(this));
+    try { this.voice.voiceName = window.localStorage.getItem("race-engineer-voice") || ""; } catch {}
+    this.power.addEventListener("click", function () {
+      this.setPower(!this.enabled);
+      this.power.blur();
+    }.bind(this));
+    this.voiceChoice.addEventListener("change", function () {
+      this.voice.voiceName = this.voiceChoice.value;
+      try { window.localStorage.setItem("race-engineer-voice", this.voice.voiceName); } catch {}
+      this.voice.clear();
+      this.voiceChoice.blur();
+    }.bind(this));
+    this.populateVoices();
+    this.previewButton.disabled = !("speechSynthesis" in window);
+    this.previewButton.addEventListener("click", function () {
+      this.voice.preview(this.language.value);
+      this.previewButton.blur();
+    }.bind(this));
+    if (window.speechSynthesis?.addEventListener) {
+      window.speechSynthesis.addEventListener("voiceschanged", this.populateVoices.bind(this));
+    }
     const toggle = this.panel.querySelector(".voice-toggle");
     this.voiceToggle = toggle;
     toggle.addEventListener("click", function () {
@@ -101,14 +133,59 @@ export class RaceEngineer {
     window.addEventListener("blur", function () { this.voice.stopListening(true); }.bind(this));
     // Yuan can dispatch this event after analysis without importing game internals.
     window.addEventListener("race:lap-summary", function (event) { this.addLapSummary(event.detail); }.bind(this));
+    this.setPower(false);
+  }
+
+  populateVoices() {
+    const selected = this.voice.voiceName || this.voiceChoice.value;
+    this.voiceChoice.replaceChildren();
+    const defaultOption = document.createElement("option");
+    defaultOption.value = "";
+    defaultOption.textContent = "Device default";
+    this.voiceChoice.appendChild(defaultOption);
+    for (const voice of window.speechSynthesis?.getVoices?.() || []) {
+      if (!voice.lang.startsWith("en") && !voice.lang.startsWith("ja")) continue;
+      const option = document.createElement("option");
+      option.value = voice.voiceURI || voice.name;
+      option.textContent = voice.name + " · " + voice.lang;
+      this.voiceChoice.appendChild(option);
+    }
+    this.voiceChoice.value = selected;
+  }
+
+  setPower(enabled) {
+    this.enabled = enabled;
+    this.invalidate();
+    this.events.clear();
+    this.previousEvents.clear();
+    this.lastRequest = -Infinity;
+    this.lastTip = "";
+    if (!enabled) {
+      this.voice.setEnabled(false);
+      this.voiceToggle.textContent = "Voice off";
+      this.voiceToggle.setAttribute("aria-pressed", "false");
+      this.autoTips.checked = false;
+      this.tip.textContent = "Engineer is off.";
+    } else {
+      this.tip.textContent = "Ask your engineer for advice.";
+    }
+    this.power.textContent = enabled ? "Engineer on" : "Engineer off";
+    this.power.setAttribute("aria-pressed", String(enabled));
+    this.voiceToggle.disabled = !enabled;
+    this.talk.disabled = !enabled || !this.voice.recognition;
+    this.input.disabled = !enabled;
+    this.sendButton.disabled = !enabled;
+    this.autoTips.disabled = !enabled;
+    this.setStatus(enabled ? "Ask a question, or enable automatic tips." : "Off · no AI requests");
   }
 
   setStatus(text) {
-    this.status.textContent = text;
+    this.status.textContent = this.enabled ? text : "Off · no AI requests";
     this.refreshFace();
   }
 
   startConversation() {
+    if (!this.enabled) return;
     if (this.paused || !this.state) {
       this.setStatus("Choose Free drive before talking to your engineer.");
       return;
@@ -124,7 +201,10 @@ export class RaceEngineer {
   refreshFace() {
     let expression = "idle";
     let label = "Standing by";
-    if (this.voice?.listening) {
+    if (!this.enabled) {
+      expression = "off";
+      label = "Off";
+    } else if (this.voice?.listening) {
       expression = "listening";
       label = "Listening to you";
     } else if (this.voice?.current) {
@@ -136,6 +216,7 @@ export class RaceEngineer {
     }
     this.panel.dataset.expression = expression;
     this.mood.textContent = label;
+    this.previewButton.disabled = !("speechSynthesis" in window) || this.voice?.listening;
     if (this.voice?.recognition) {
       this.talk.textContent = this.voice.stopping ? "Sending question…" : this.voice.listening ? "Finish talking" : "Talk to engineer";
       this.talk.setAttribute("aria-pressed", String(this.voice.listening));
@@ -160,7 +241,7 @@ export class RaceEngineer {
     this.lastRequest = -Infinity;
     this.lastTip = "";
     this.needsLapFeedback = false;
-    this.tip.textContent = "Drive to receive coaching.";
+    this.tip.textContent = this.enabled ? "Ask your engineer for advice." : "Engineer is off.";
     this.questionText.hidden = true;
     this.setStatus("Waiting for driving data");
   }
@@ -176,6 +257,7 @@ export class RaceEngineer {
     if (paused && !this.paused) this.invalidate();
     this.paused = paused;
     this.state = state;
+    if (!this.enabled) return;
     const newEvents = [];
     for (const event of state.events || []) {
       if (!this.previousEvents.has(event)) newEvents.push(event);
@@ -197,13 +279,14 @@ export class RaceEngineer {
       const question = this.queuedQuestion;
       this.queuedQuestion = "";
       this.request(question);
-    } else if (this.needsLapFeedback || performance.now() - this.lastRequest >= CONFIG.coach.intervalMs) {
+    } else if (this.autoTips.checked && (this.needsLapFeedback || performance.now() - this.lastRequest >= CONFIG.coach.intervalMs)) {
       this.needsLapFeedback = false;
       this.request();
     }
   }
 
   ask(question) {
+    if (!this.enabled) return;
     question = question.trim().slice(0, CONFIG.coach.maxQuestionLength);
     if (!question) return;
     if (!this.state || this.paused) {
@@ -221,6 +304,7 @@ export class RaceEngineer {
   }
 
   async request(question = "") {
+    if (!this.enabled || !this.state || this.paused || this.controller) return;
     const generation = this.generation;
     const controller = new AbortController();
     this.controller = controller;
@@ -233,7 +317,7 @@ export class RaceEngineer {
     try {
       const response = await fetch("/api/coach", {
         method: "POST", headers: { "Content-Type": "application/json" }, signal: controller.signal,
-        body: JSON.stringify({ state: state, lang: lang, history: this.history, question: question }),
+        body: JSON.stringify({ enabled: true, state: state, lang: lang, history: this.history, question: question }),
       });
       if (!response.ok) throw new Error("coach_unavailable");
       const tip = await response.json();

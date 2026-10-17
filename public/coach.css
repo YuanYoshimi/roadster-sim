@@ -5,6 +5,13 @@
 .engineer-mood { display: block; color: #89dce4; font-size: 12px; margin-top: 6px; }
 .engineer-controls { display: flex; gap: 8px; margin-top: 10px; }
 .engineer-controls select { flex: 1; }
+#engineer .engineer-power { width: 100%; margin-top: 8px; font-weight: 700; }
+#engineer .engineer-power[aria-pressed="true"] { border-color: #89dce4; color: #89dce4; }
+.engineer-voice-label { display: block; color: var(--muted, #abb5c4); font-size: 11px; margin-top: 10px; }
+#engineer .engineer-voice { display: block; width: 100%; margin-top: 4px; }
+.engineer-auto { display: flex; align-items: center; gap: 6px; font-size: 12px; margin: 10px 0; }
+#engineer .engineer-auto input { flex: none; }
+#engineer[data-expression="off"] .engineer-avatar { opacity: 0.45; }
 .engineer-mouth { transform-box: fill-box; transform-origin: center; }
 #engineer[data-expression="speaking"] .engineer-mouth { transform: scaleY(3); }
 #engineer[data-expression="listening"] .engineer-eyes { transform: translateY(-2px); }
