@@ -115,8 +115,8 @@ export class EngineerVoice {
 
   queue(tip, urgent = false) {
     if (!this.enabled) return;
-    const lifetime=tip.source === "live" ? Math.max(0,CONFIG.liveCoaching.maximumAgeMs-(Date.now()-tip.capturedAt)) : CONFIG.coach.tipLifetimeMs;
-    this.pending = { text: tip.text, lang: tip.lang, urgent: urgent, expires: performance.now() + lifetime };
+    const lifetime=tip.source === "guide-cue" ? CONFIG.coach.demoCueLifetimeMs : tip.source === "live" ? Math.max(0,CONFIG.liveCoaching.maximumAgeMs-(Date.now()-tip.capturedAt)) : CONFIG.coach.tipLifetimeMs;
+    this.pending = { text: tip.text, lang: tip.lang, urgent: urgent, guided: tip.source === "guide" || tip.source === "guide-cue", expires: performance.now() + lifetime };
     if (urgent && "speechSynthesis" in window) {
       this.current = null;
       window.speechSynthesis.cancel();
@@ -131,9 +131,9 @@ export class EngineerVoice {
 
   update(state, throttle, paused) {
     if (!this.enabled) return;
-    const safe = !paused && !this.listening && !state.airborne &&
+    const safe = !paused && !this.listening && (state.guidedDemo || !state.airborne &&
       (state.speedKmh < CONFIG.coach.stoppedSpeedKmh ||
-        (Math.abs(state.steer) < CONFIG.coach.straightSteer && (throttle > CONFIG.coach.straightThrottle || state.telemetry?.source === "live" && state.telemetry.brake < 0.1)));
+        (Math.abs(state.steer) < CONFIG.coach.straightSteer && (throttle > CONFIG.coach.straightThrottle || state.telemetry?.source === "live" && state.telemetry.brake < 0.1))));
     if (this.current && !safe && !this.current.urgent) {
       if (this.current.kind === "acknowledgment") this.acknowledgment = this.current;
       else if (!this.pending) this.pending = this.current;

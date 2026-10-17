@@ -32,7 +32,7 @@ test("engineer defaults off, requires explicit automatic tips, and ignores late 
     return new Promise(function (resolve) { resolveRequest = resolve; });
   };
   try {
-    const engineer = new RaceEngineer();
+    const engineer = new RaceEngineer({continuous:false});
     for (let i = 0; i < 30; i++) engineer.update(SAMPLE_STATE, 1, false);
     engineer.ask("Test question");
     await engineer.request();
@@ -121,7 +121,7 @@ test("a measured cue is acknowledged only while visible and enabled; power off a
     return new Promise(function (resolve) { finish = resolve; });
   };
   try {
-    const engineer = new RaceEngineer();
+    const engineer = new RaceEngineer({continuous:false});
     const focus = { id: "proposed-focus", status: "proposed", corner: "T4", metric: "brakedEarlyMeters", actionMeters: 2,
       evidenceLapIds: ["lap-1", "lap-2"], confidence: "moderate", meanLossSeconds: 0.2 };
     engineer.showCoaching({ focus });
@@ -161,7 +161,7 @@ test("asking to practice a skill checks evidence then requests one AI explanatio
     } }; } };
   };
   try {
-    const engineer = new RaceEngineer();
+    const engineer = new RaceEngineer({continuous:false});
     engineer.ask("I want to work on corner speed at T4");
     assert.equal(calls.length, 0);
     engineer.setPower(true);
@@ -205,7 +205,7 @@ test("changing the practice goal preserves in-flight measured laps and waits for
     } }; } });
   };
   try {
-    const engineer = new RaceEngineer();
+    const engineer = new RaceEngineer({continuous:false});
     engineer.setPower(true);
     engineer.addLapSummary({ id: "lap-1", summary: "Measured lap", corners: [] });
     await new Promise(setImmediate);
@@ -232,7 +232,7 @@ test("a captured spoken question is acknowledged before its data-backed answer",
   globalThis.SpeechSynthesisUtterance=class {constructor(text){this.text=text;}};
   globalThis.fetch=async function(url,options){requestBody=JSON.parse(options.body);return {ok:true,json:async function(){return {text:"I can see speed and steering, but no clean lap comparison yet.",source:"ai",latencyMs:20};}};};
   try {
-    const engineer=new RaceEngineer();engineer.setPower(true);
+    const engineer=new RaceEngineer({continuous:false});engineer.setPower(true);
     const stopped={...SAMPLE_STATE,speedKmh:0,steer:0,events:[]};engineer.update(stopped,0,false);
     engineer.startConversation();
     const result=[{transcript:"What data can you see?"}];result.isFinal=true;
@@ -247,4 +247,26 @@ test("a captured spoken question is acknowledged before its data-backed answer",
     assert.match(spoken[1].text,/speed and steering/);
     engineer.setPower(false);
   } finally {globalThis.fetch=originalFetch;delete globalThis.window;delete globalThis.document;delete globalThis.SpeechSynthesisUtterance;}
+});
+
+test("one power switch enables ongoing AI and speech, while off cancels both", async function() {
+  const originalFetch=globalThis.fetch;
+  globalThis.document={createElement:()=>new Element(),body:{appendChild(){}}};
+  globalThis.window={addEventListener(){},speechSynthesis:{cancel(){},getVoices(){return [];}}};
+  let calls=0;
+  globalThis.fetch=async()=>{calls++;return {ok:true,json:async()=>({text:'Let’s start with the ramp approach.',source:'ai'})};};
+  try {
+    const engineer=new RaceEngineer();
+    assert.equal(engineer.enabled,false);
+    engineer.setPower(true);
+    assert.equal(engineer.autoTips.checked,true);
+    assert.equal(engineer.voice.enabled,true);
+    engineer.update({...SAMPLE_STATE,speedKmh:0,events:[]},0,false);
+    await new Promise(setImmediate);
+    assert.equal(calls,1,'initial conversational check-in works even while stopped');
+    engineer.setPower(false);
+    assert.equal(engineer.voice.enabled,false);
+    assert.equal(engineer.voice.handsFree,false);
+    assert.equal(engineer.autoTips.checked,false);
+  } finally {globalThis.fetch=originalFetch;delete globalThis.window;delete globalThis.document;}
 });

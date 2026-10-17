@@ -382,6 +382,11 @@ function sendStateIfDue(now) {
   state.events = pendingEvents;
   state.goalText = hud.goalText.textContent;
   state.telemetry = raceSession.liveContext;
+  const position=car.getPosition();
+  state.stunt={source:"live",trackId:engineer.trackId,capturedAt:Date.now(),
+    x:position.x,y:position.y,z:position.z,upY:car.getUp().y,
+    gas:lastInput.gas,brake:lastInput.brake,steer:lastInput.steer,thrust:lastInput.thrust,
+    lift:lastInput.lift,roll:lastInput.roll,rolling:car.rolling,airborne:car.airborne,goalDone:level?.goalState?.done===true};
   state.events = pendingEvents;
   engineer.update(state, lastInput.gas, paused, raceSession.latestSample);
   if (socket && socket.readyState === WebSocket.OPEN) {
@@ -453,7 +458,7 @@ let currentLevelIndex = 0;
 let level = null;
 
 async function loadLevel(index) {
-  engineer.reset();
+  engineer.reset(false);
   currentLevelIndex = index;
   const entry = levelList[index];
   engineer.setTrack(entry.file);
@@ -474,6 +479,12 @@ async function loadLevel(index) {
   }
   showMessage(data.name, 1.8);
 }
+
+engineer.onDemoRequest=async function(trackId) {
+  const index=levelList.findIndex(entry=>entry.file===trackId);
+  if(index<0) throw new Error("unknown_demo");
+  await loadLevel(index);
+};
 
 // Put the car back at the start, and restart the level's traffic, rival and timers.
 function restartScenario() {

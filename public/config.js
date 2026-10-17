@@ -76,6 +76,7 @@ export const CONFIG = {
     straightThrottle: 0.4,
     stoppedSpeedKmh: 5,
     tipLifetimeMs: 15000,
+    demoCueLifetimeMs: 3000,
     speechRate: 1.05,
     pushToTalkKey: "KeyV",
     handsFreeRestartMs: 750,
