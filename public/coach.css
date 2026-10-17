@@ -33,3 +33,5 @@ body.touring #engineer { bottom: 175px; max-height: calc(100dvh - 190px); }
 body:has(#telemetry[style*="block"]) #engineer { right: 592px; }
 @media (max-width: 1000px) { body:has(#telemetry[style*="block"]) #engineer { display: none; } }
 @media (max-height: 650px) { .engineer-avatar { width: 56px; height: 63px; } #engineer { max-height: calc(100dvh - 255px); } }
+
+.engineer-memory { color: var(--muted, #abb5c4); font-size: 11px; margin: 8px 0; }

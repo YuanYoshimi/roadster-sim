@@ -23,11 +23,18 @@
     <button data-sample="lowAir">Low air</button>
     <button id="lap">Send example lap summary</button>
   </div>
+  <button id="memory-demo">Load 3 example laps into Neo4j · no AI credits</button>
+  <p id="memory-result" role="status"></p>
   <pre id="state"></pre>
   <script type="module">
     import { RaceEngineer } from "./coach.js";
     import { SAMPLE_STATE } from "./shared/protocol.js";
-    const engineer = new RaceEngineer();
+    const engineer = new RaceEngineer({ dataset: "demo" });
+    engineer.setTrack("suzuka.json");
+    document.getElementById("memory-demo").onclick = async function () {
+      const result = await engineer.loadDemoMemory();
+      document.getElementById("memory-result").textContent = result ? JSON.stringify(result) : "Turn the engineer on first. Automatic tips can stay off.";
+    };
     const samples = {
       straight: { ...SAMPLE_STATE, steer: 0, fansOn: true, events: [] },
       corner: { ...SAMPLE_STATE },

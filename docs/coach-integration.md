@@ -24,7 +24,7 @@ window.dispatchEvent(new CustomEvent("race:lap-summary", {
 }));
 ```
 
-Use actual analysis values, not this example. The coach retains the latest five summaries in that browser tab, sends them with coaching requests, and clears them when changing levels. Summaries should use consistent corner names and include lap numbers to support trend detection. No storage or Neo4j persistence is implemented yet.
+Use actual analysis values, not this example. The coach retains the latest five summaries in that browser tab, sends them with coaching requests, and clears them when changing levels. Summaries should use consistent corner names and include lap numbers to support trend detection. Optional Neo4j persistence now stores summaries while the engineer is on and retrieves past laps for the same browser driver, track, and car mode. See [Neo4j setup](neo4j-memory.md) for credentials and the structured lap format.
 
 The existing shared state/phone protocol is unchanged. The small `game.js` adapter also passes throttle directly to the voice scheduler; throttle is not added to the phone message format.
 

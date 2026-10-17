@@ -16,6 +16,7 @@ import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 import QRCode from "qrcode";
 import { installCoachRoutes } from "./server/ai.js";
+import { RaceMemory, installMemoryRoutes } from "./server/memory.js";
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
 
@@ -75,7 +76,9 @@ app.get("/api/qr.svg", async function (req, res) {
 });
 
 // Friend's coach endpoint; scenario generation is a separate milestone.
-installCoachRoutes(app);
+const memory = new RaceMemory();
+installMemoryRoutes(app, memory);
+installCoachRoutes(app, { memory: memory });
 
 function getPhoneUrl(req) {
   if (tunnelUrl) {

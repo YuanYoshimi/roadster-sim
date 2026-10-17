@@ -2,8 +2,24 @@
 import { CONFIG } from "./config.js";
 import { EngineerVoice, instantCallout } from "./voice.js";
 
+function memoryId() {
+  // LAN HTTP pages may lack randomUUID; these IDs are grouping keys, not login tokens.
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  return "driver-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
+}
+
 export class RaceEngineer {
-  constructor() {
+  constructor(options = {}) {
+    this.dataset = options.dataset === "demo" ? "demo" : "live";
+    this.driverId = memoryId();
+    try {
+      this.driverId = window.localStorage.getItem("race-driver-id") || this.driverId;
+      if (!/^[A-Za-z0-9_-]{1,100}$/.test(this.driverId)) this.driverId = memoryId();
+      window.localStorage.setItem("race-driver-id", this.driverId);
+    } catch {}
+    this.sessionId = memoryId();
+    this.trackId = "blank";
+    this.memoryControllers = new Set();
     this.enabled = false;
     this.state = null;
     this.history = [];
@@ -52,6 +68,8 @@ export class RaceEngineer {
       <label class="engineer-auto"><input type="checkbox"> Automatic tips (uses AI credits)</label>
       <p class="engineer-tip" aria-live="polite">Drive to receive coaching.</p>
       <div class="engineer-status" role="status">Waiting for driving data</div>
+      <div class="engineer-memory" role="status">Neo4j memory: not checked</div>
+      <button type="button" class="memory-check">Check memory · no AI credits</button>
       <p class="engineer-question" hidden></p>
       <form><input aria-label="Question for your engineer" placeholder="Ask your engineer…" maxlength="400"><button>Ask</button></form>
       <button type="button" class="engineer-talk" aria-pressed="false">Talk to engineer</button>
@@ -61,6 +79,10 @@ export class RaceEngineer {
     this.language.value = CONFIG.coach.language;
     this.tip = this.panel.querySelector(".engineer-tip");
     this.status = this.panel.querySelector(".engineer-status");
+    this.memoryStatus = this.panel.querySelector(".engineer-memory");
+    this.panel.querySelector(".memory-check").addEventListener("click", function () {
+      this.memoryRequest("/api/memory/status?check=true");
+    }.bind(this));
     this.mood = this.panel.querySelector(".engineer-mood");
     this.questionText = this.panel.querySelector(".engineer-question");
     this.talk = this.panel.querySelector(".engineer-talk");
@@ -225,6 +247,8 @@ export class RaceEngineer {
 
   invalidate() {
     this.generation++;
+    for (const controller of this.memoryControllers) controller.abort();
+    this.memoryControllers.clear();
     if (this.controller) this.controller.abort();
     this.controller = null;
     this.voice.clear();
@@ -246,14 +270,61 @@ export class RaceEngineer {
     this.setStatus("Waiting for driving data");
   }
 
-  addLapSummary(summary) {
-    if (typeof summary !== "string" || !summary.trim()) return;
-    this.history.push(summary.trim().slice(0, CONFIG.coach.maxSummaryLength));
+  setTrack(file) {
+    this.trackId = file.split("/").pop().replace(/\.json$/, "").replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 100) || "blank";
+  }
+
+  memoryScope() {
+    return { driverId: this.driverId, sessionId: this.sessionId, trackId: this.trackId,
+      mode: this.state?.mode || "performance", dataset: this.dataset };
+  }
+
+  showMemory(result) {
+    const labels = { not_configured: "add Aura credentials to .env", unavailable: "unavailable; local coaching continues",
+      busy: "busy", connected: "connected" };
+    this.memoryStatus.textContent = "Neo4j memory: " + (labels[result.status] || result.status);
+    if (result.data?.recentLaps) result = { ...result, laps: result.data.recentLaps.length };
+    if (result.laps !== undefined) this.memoryStatus.textContent += " · " + result.laps + " past laps recalled";
+    if (this.dataset === "demo") this.memoryStatus.textContent += " · examples only";
+  }
+
+  async memoryRequest(url, body) {
+    const controller = new AbortController();
+    this.memoryControllers.add(controller);
+    const generation = this.generation;
+    const timeout = setTimeout(function () { controller.abort(); }, CONFIG.memory.browserTimeoutMs);
+    try {
+      const response = await fetch(url, { method: body ? "POST" : "GET", signal: controller.signal,
+        headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+      if (!response.ok) throw new Error("memory_unavailable");
+      const result = await response.json();
+      if (generation === this.generation) this.showMemory(result);
+      return result;
+    } catch {
+      if (generation === this.generation) this.showMemory({ status: "unavailable" });
+    } finally { clearTimeout(timeout); this.memoryControllers.delete(controller); }
+  }
+
+  loadDemoMemory() {
+    if (!this.enabled || this.dataset !== "demo") return;
+    return this.memoryRequest("/api/memory/demo", { enabled: true, scope: this.memoryScope() });
+  }
+
+  addLapSummary(detail) {
+    const lap = typeof detail === "string" ? { id: memoryId(), summary: detail, corners: [] } : detail;
+    if (!lap || typeof lap.summary !== "string" || !lap.summary.trim()) return;
+    this.history.push(lap.summary.trim().slice(0, CONFIG.coach.maxSummaryLength));
     this.history = this.history.slice(-CONFIG.coach.maxHistory);
     this.needsLapFeedback = true;
+    if (this.enabled) this.memoryRequest("/api/memory/laps", { enabled: true, scope: this.memoryScope(), lap: lap });
   }
 
   update(state, throttle, paused = false) {
+    if (this.state && this.state.mode !== state.mode) {
+      this.invalidate();
+      this.history = [];
+      this.needsLapFeedback = false;
+    }
     if (paused && !this.paused) this.invalidate();
     this.paused = paused;
     this.state = state;
@@ -313,16 +384,18 @@ export class RaceEngineer {
     this.events.clear();
     const lang = this.language.value;
     this.setStatus("Engineer thinking…");
-    const timeout = setTimeout(function () { controller.abort(); }, CONFIG.coach.requestTimeoutMs + 1000);
+    const timeout = setTimeout(function () { controller.abort(); }, CONFIG.coach.requestTimeoutMs + CONFIG.memory.browserTimeoutMs);
     try {
       const response = await fetch("/api/coach", {
         method: "POST", headers: { "Content-Type": "application/json" }, signal: controller.signal,
-        body: JSON.stringify({ enabled: true, state: state, lang: lang, history: this.history, question: question }),
+        body: JSON.stringify({ enabled: true, state: state, lang: lang, history: this.history, question: question,
+          memory: { enabled: true, scope: this.memoryScope() } }),
       });
       if (!response.ok) throw new Error("coach_unavailable");
       const tip = await response.json();
       if (generation !== this.generation) return;
       if (typeof tip.text !== "string" || !tip.text) throw new Error("empty_tip");
+      if (tip.memory) this.showMemory(tip.memory);
       this.tip.textContent = tip.text;
       if (tip.source === "ai") this.setStatus("ai& · " + tip.latencyMs + " ms");
       else if (tip.reason === "not_configured") this.setStatus("Practice tips · ai& not configured");

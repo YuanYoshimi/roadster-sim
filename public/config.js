@@ -4,6 +4,17 @@
 // Numbers marked "reveal" are Tesla's claims from the Oct 15, 2026 event (not verified).
 
 export const CONFIG = {
+  memory: {
+    queryTimeoutMs: 1500,
+    connectionTimeoutMs: 3000,
+    retryDelayMs: 5000,
+    maxConcurrentRequests: 2,
+    maxCorners: 32,
+    summaryChars: 600,
+    historyLimit: 5,
+    adviceLimit: 3,
+    browserTimeoutMs: 12000,
+  },
   coach: {
     language: "en",
     intervalMs: 8000,

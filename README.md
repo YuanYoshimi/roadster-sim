@@ -138,3 +138,7 @@ Put `AI_BASE_URL`, `AI_API_KEY` and `AI_MODEL` in `.env` (copy `.env.example`). 
 - The GitHub repo is **private** during prototyping. Make it public before submission:
   `gh repo edit YuanYoshimi/roadster-sim --visibility public --accept-visibility-change-consequences`
 - Record a backup demo video.
+
+### Optional Neo4j race memory
+
+The engineer can remember lap summaries and corner measurements across sessions using Neo4j Aura Free. See [setup and integration](docs/neo4j-memory.md). Run `npm run memory:check` to verify the connection without AI charges, or use the practice page to load isolated examples. The game still runs without Neo4j.

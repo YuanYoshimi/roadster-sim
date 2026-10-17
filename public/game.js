@@ -447,6 +447,7 @@ async function loadLevel(index) {
   engineer.reset();
   currentLevelIndex = index;
   const entry = levelList[index];
+  engineer.setTrack(entry.file);
   const data = await fetchLevel(entry.file);
   if (level) {
     removeLevel(level);
