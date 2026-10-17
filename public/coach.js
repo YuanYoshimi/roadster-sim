@@ -34,6 +34,9 @@ export class RaceEngineer {
     this.enabled = false;
     this.state = null;
     this.history = [];
+    this.observations = [];
+    this.coachingHistory = [];
+    this.pendingAIExplanation = false;
     this.lapMeasurements = [];
     this.conversation = [];
     this.practiceGoal = cleanPracticeGoal();
@@ -42,6 +45,7 @@ export class RaceEngineer {
     this.events = new Set();
     this.previousEvents = new Set();
     this.lastRequest = -Infinity;
+    this.lastRequestWallTime = 0;
     this.controller = null;
     this.generation = 0;
     this.lapGeneration = 0;
@@ -81,6 +85,8 @@ export class RaceEngineer {
       <label class="engineer-voice-label">Mac / browser voice
         <select class="engineer-voice" aria-label="Speaking voice"><option value="">Device default</option></select>
       </label>
+      <button type="button" class="hands-free-toggle" aria-pressed="false">Hands-free conversation · Off</button>
+      <small class="hands-free-status" role="status">Listens between replies. Speak, then pause to send.</small>
       <button type="button" class="voice-preview">Preview voice · free</button>
       <label class="engineer-voice-label">Practice goal
         <select class="practice-goal" aria-label="Practice goal">
@@ -92,7 +98,7 @@ export class RaceEngineer {
       </label>
       <small class="practice-label">Set a goal by typing or talking, e.g. “I want to work on corner speed.”</small>
       <p class="practice-evidence"></p>
-      <label class="engineer-auto"><input type="checkbox"> Automatic tips (uses AI credits)</label>
+      <label class="engineer-auto"><input type="checkbox"> Automatic AI coaching (uses AI credits)</label>
       <p class="engineer-tip" aria-live="polite">Drive to receive coaching.</p>
       <div class="engineer-status" role="status">Waiting for driving data</div>
       <div class="engineer-memory" role="status">Neo4j memory: not checked</div>
@@ -138,6 +144,18 @@ export class RaceEngineer {
       this.memoryRequest("/api/memory/status?check=true");
     }.bind(this));
     this.mood = this.panel.querySelector(".engineer-mood");
+    this.handsFreeButton=this.panel.querySelector(".hands-free-toggle");
+    this.handsFreeStatus=this.panel.querySelector(".hands-free-status");
+    this.handsFreeButton.addEventListener("click",function(){
+      if(!this.enabled)return;
+      if(this.voice.handsFree) this.voice.setHandsFree(false);
+      else {
+        this.startConversation();
+        this.voice.setHandsFree(true);
+      }
+      this.refreshFace();
+      this.handsFreeButton.blur();
+    }.bind(this));
     this.questionText = this.panel.querySelector(".engineer-question");
     this.talk = this.panel.querySelector(".engineer-talk");
     this.power = this.panel.querySelector(".engineer-power");
@@ -186,6 +204,7 @@ export class RaceEngineer {
     this.language.addEventListener("change", function () {
       this.invalidate();
       this.lastRequest = -Infinity;
+      this.lastRequestWallTime = 0;
       this.lastTip = "";
       this.language.blur();
     }.bind(this));
@@ -241,6 +260,7 @@ export class RaceEngineer {
     this.events.clear();
     this.previousEvents.clear();
     this.lastRequest = -Infinity;
+    this.lastRequestWallTime = 0;
     this.lastTip = "";
     if (!enabled) {
       this.pendingGoalPlan = false;
@@ -256,6 +276,7 @@ export class RaceEngineer {
     this.power.setAttribute("aria-pressed", String(enabled));
     this.voiceToggle.disabled = !enabled;
     this.talk.disabled = !enabled || !this.voice.recognition;
+    this.handsFreeButton.disabled = !enabled || !this.voice.recognition;
     this.input.disabled = !enabled;
     this.sendButton.disabled = !enabled;
     this.autoTips.disabled = !enabled;
@@ -304,6 +325,14 @@ export class RaceEngineer {
     this.panel.dataset.expression = expression;
     this.mood.textContent = label;
     this.previewButton.disabled = !("speechSynthesis" in window) || this.voice?.listening;
+    if(this.handsFreeButton && this.voice) {
+      this.handsFreeButton.textContent="Hands-free conversation · "+(this.voice.handsFree?"On":"Off");
+      this.handsFreeButton.setAttribute("aria-pressed",String(this.voice.handsFree));
+      this.handsFreeStatus.textContent=!this.enabled ? "Turn Engineer on to enable hands-free conversation." : !this.voice.recognition ? "Speech input unavailable in this browser." :
+        this.voice.handsFreeError ? "Microphone unavailable ("+this.voice.handsFreeError+"). Hands-free stopped; try again or use another browser." :
+        this.voice.handsFree ? (this.paused ? "Paused with the game." : this.voice.listening ? "Listening automatically. Speak, then pause to send." : "Waiting for the engineer to finish, then listening again.") :
+        "Listens between replies. Speak, then pause to send.";
+    }
     if (this.voice?.recognition) {
       this.talk.textContent = this.voice.stopping ? "Sending question…" : this.voice.listening ? "Finish talking" : "Talk to engineer";
       this.talk.setAttribute("aria-pressed", String(this.voice.listening));
@@ -330,6 +359,9 @@ export class RaceEngineer {
     this.pendingLiveTip = null;
     this.invalidate();
     this.history = [];
+    this.observations = [];
+    this.coachingHistory = [];
+    this.pendingAIExplanation = false;
     this.lapMeasurements = [];
     this.conversation = [];
     this.practiceEvidence.textContent = "";
@@ -340,6 +372,7 @@ export class RaceEngineer {
     this.previousEvents.clear();
     this.state = null;
     this.lastRequest = -Infinity;
+    this.lastRequestWallTime = 0;
     this.lastTip = "";
     this.needsLapFeedback = false;
     this.tip.textContent = this.enabled ? "Ask your engineer for advice." : "Engineer is off.";
@@ -442,7 +475,11 @@ export class RaceEngineer {
         this.tip.textContent = result.data.practice.text;
         this.setStatus("Practice plan · no AI credits");
         const text = result.data.focus ? focusText(result.data.focus, this.language.value, this.dataset) : result.data.practice.text;
-        if (text !== this.lastTip) { this.voice.queue({ text: text, lang: this.language.value }); this.lastTip = text; }
+        if(this.autoTips.checked || this.queuedQuestion) {
+          this.lastRequest=-Infinity;
+          this.pendingAIExplanation=true;
+          this.setStatus("Measured evidence ready · asking ai& for coaching…");
+        } else if (text !== this.lastTip) { this.voice.queue({ text: text, lang: this.language.value }); this.lastTip = text; }
       }
       return result;
     } finally {
@@ -495,6 +532,9 @@ export class RaceEngineer {
     if (this.state && this.state.mode !== state.mode) {
       this.invalidate();
       this.history = [];
+      this.observations = [];
+      this.coachingHistory = [];
+      this.pendingAIExplanation = false;
       this.lapMeasurements = [];
       this.conversation = [];
       this.practiceEvidence.textContent = "";
@@ -512,15 +552,19 @@ export class RaceEngineer {
       if (!this.previousEvents.has(event)) newEvents.push(event);
     }
     this.previousEvents = new Set(state.events || []);
-    const callout = instantCallout(newEvents, this.language.value);
+    const callout = instantCallout(newEvents.filter(function(event){return ["crash","flip","tank_empty"].includes(event);}), this.language.value);
     if (!paused && callout) {
       this.tip.textContent = callout.text;
       this.setStatus("Instant callout · driving event");
       this.voice.queue(callout, true);
     }
-    if (this.dataset === "live" && !paused && !this.voice.listening && liveSample && Date.now()-liveSample.timestampMs<CONFIG.liveCoaching.maximumAgeMs) {
+    if (this.dataset === "live" && !paused && liveSample && Date.now()-liveSample.timestampMs<CONFIG.liveCoaching.maximumAgeMs) {
       const liveTip=this.liveCoach.update(liveSample,this.language.value);
-      if(liveTip) this.pendingLiveTip=liveTip;
+      if(liveTip) {
+        this.observations.push({source:liveTip.source,kind:liveTip.kind,trackId:liveTip.trackId,capturedAt:liveTip.capturedAt,evidence:liveTip.evidence});
+        this.observations=this.observations.slice(-CONFIG.coach.maximumObservations);
+        if(liveTip.kind==="off_track") this.pendingLiveTip=liveTip;
+      }
       if(this.pendingLiveTip && Date.now()-this.pendingLiveTip.capturedAt>CONFIG.liveCoaching.maximumAgeMs) this.pendingLiveTip=null;
       if(this.pendingLiveTip && !callout && !this.voice.current?.urgent && !this.queuedQuestion && !this.controller && !this.planBusy && !this.voice.acknowledgment) {
         this.tip.textContent=this.pendingLiveTip.text;
@@ -531,6 +575,10 @@ export class RaceEngineer {
       }
     }
     this.voice.update(state, throttle, paused);
+    const meaningfulDriving=state.speedKmh>=CONFIG.liveCoaching.minimumSpeedKmh || this.events.size>0 || this.observations.some(function(item){return item.capturedAt>this.lastRequestWallTime;}.bind(this));
+    const automaticDue=this.autoTips.checked && (meaningfulDriving || this.pendingAIExplanation) && performance.now()-this.lastLiveTipAt>=CONFIG.coach.intervalMs && performance.now()-this.lastRequest>=CONFIG.coach.intervalMs &&
+      (!this.voice.handsFree || performance.now()-this.voice.lastSpeechEndedAt>=CONFIG.coach.handsFreeListenWindowMs) && !this.voice.userSpeaking && !this.voice.current && !this.voice.pending && !this.voice.acknowledgment;
+    this.voice.pollHandsFree(this.language.value,paused || Boolean(this.controller) || this.planBusy || Boolean(this.queuedQuestion) || automaticDue);
     this.refreshFace();
     if (paused) return;
     for (const event of state.events || []) this.events.add(event);
@@ -545,7 +593,7 @@ export class RaceEngineer {
       const question = this.queuedQuestion;
       this.queuedQuestion = "";
       this.request(question);
-    } else if (this.autoTips.checked && performance.now()-this.lastLiveTipAt>=CONFIG.coach.intervalMs && (this.needsLapFeedback || performance.now() - this.lastRequest >= CONFIG.coach.intervalMs)) {
+    } else if (automaticDue) {
       this.needsLapFeedback = false;
       this.request();
     }
@@ -562,6 +610,7 @@ export class RaceEngineer {
       this.questionText.textContent = "You: “" + question + "”";
       this.questionText.hidden = false;
       this.setPracticeGoal(goal);
+      this.queuedQuestion=question; // A spoken/typed goal deserves an AI reply after evidence lookup.
       this.voice.acknowledge(this.language.value);
       this.setStatus("Heard you. Checking measured laps for your practice goal…");
       return;
@@ -586,7 +635,9 @@ export class RaceEngineer {
     const generation = this.generation;
     const controller = new AbortController();
     this.controller = controller;
+    this.pendingAIExplanation=false;
     this.lastRequest = performance.now();
+    this.lastRequestWallTime = Date.now();
     const state = { ...this.state, events: Array.from(this.events) };
     this.events.clear();
     const lang = this.language.value;
@@ -599,6 +650,7 @@ export class RaceEngineer {
         method: "POST", headers: { "Content-Type": "application/json" }, signal: controller.signal,
         body: JSON.stringify({ enabled: true, state: state, lang: lang, history: this.history, question: question,
           practiceGoal: this.practiceGoal, laps: this.lapMeasurements, conversation: this.conversation,
+          explain: this.autoTips.checked, observations: this.observations, recentCoaching: this.coachingHistory,
           memory: { enabled: true, scope: this.memoryScope() } }),
       });
       if (!response.ok) throw new Error("coach_unavailable");
@@ -613,6 +665,7 @@ export class RaceEngineer {
         this.conversation = this.conversation.slice(-CONFIG.coach.conversationTurns);
       }
       this.tip.textContent = tip.text;
+      if(tip.source==="ai") {this.coachingHistory.push(tip.text);this.coachingHistory=this.coachingHistory.slice(-CONFIG.coach.conversationTurns);}
       if (tip.source === "analysis") this.setStatus("Measured coaching · no AI credits");
       else if (tip.source === "ai") this.setStatus("ai& · " + tip.latencyMs + " ms");
       else if (tip.reason === "not_configured") this.setStatus("Practice tips · ai& not configured");

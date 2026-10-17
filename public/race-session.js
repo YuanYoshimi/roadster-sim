@@ -27,29 +27,29 @@ export class RaceSession {
       } catch {}
     }
     if (this.projector) this.loadMap();
-    this.status.textContent=track ? "Out-lap · cross the start line to begin recording" : "Lap analysis requires a circuit (Figure-8 or Suzuka).";
+    this.status.textContent=track ? "Out-lap · cross the start line to begin recording" : "Live Roadster telemetry active · this scenario has no circuit laps.";
   }
   reset() {
     this.sessionId="run-"+Date.now().toString(36)+"-"+Math.random().toString(36).slice(2,8);
     this.sequence=0;this.lastSample=-Infinity;this.analyzer.reset();this.analyzer.best.clear();this.lastLap=null;this.latestSample=null;this.liveContext=null;this.callouts=new Map();this.paused=true;
-    this.result.textContent="No clean reference lap yet.";
+    this.result.textContent=this.projector ? "No clean reference lap yet." : "Live coaching does not require circuit laps here.";
   }
   sample(car,input,timeSeconds,paused,events=[]) {
     this.element.hidden=document.body.classList.contains("atTitle");
     if(paused) {this.analyzer.invalidate("paused");this.paused=true;return;}
     if(events.includes("crash") || events.includes("flip")) this.analyzer.invalidate("impact");
     const interval=1/CONFIG.analysis.sampleRateHz;
-    if(!this.projector || timeSeconds-this.lastSample<interval-0.000001) return;
+    if(timeSeconds-this.lastSample<interval-0.000001) return;
     this.lastSample=Number.isFinite(this.lastSample) && timeSeconds-this.lastSample<interval*2 ? this.lastSample+interval : timeSeconds;this.paused=false;
-    const t=car.telemetry,w=t.wheels,position=this.projector.project(car.getPosition());
+    const t=car.telemetry,w=t.wheels,position=this.projector ? this.projector.project(car.getPosition()) : {distanceMeters:null,normalizedCarPosition:null,lateralOffsetMeters:null};
     const physicsVersion="physics-"+stableId({car:CONFIG.car,physics:CONFIG.physics,fans:CONFIG.fans,thrusters:CONFIG.thrusters,rocket:CONFIG.rocket,air:CONFIG.air,surfaces:CONFIG.surfaces});
-    const sample={sessionId:this.sessionId,trackId:this.trackId,trackVersion:this.projector.version,physicsVersion:physicsVersion,
+    const sample={sessionId:this.sessionId,trackId:this.trackId,trackVersion:this.projector?.version || "scene-"+stableId(this.trackId),physicsVersion:physicsVersion,
       setupId:car.mode+"-fans-"+(car.fansOn ? "on" : "off"),mode:car.mode,sequence:this.sequence++,timestampMs:Date.now(),timeSeconds:timeSeconds,
-      ...position,trackLengthMeters:this.projector.length,trackWidthMeters:this.projector.width,speedKmh:car.speedKmh,throttle:input.gas,brake:input.brake,
+      ...position,trackLengthMeters:this.projector?.length ?? null,trackWidthMeters:this.projector?.width ?? null,speedKmh:car.speedKmh,throttle:input.gas,brake:input.brake,
       steer:input.steer,steerDegrees:t.steerDeg,gLat:t.gLat,gLong:t.gLong,airborne:car.airborne,fansOn:car.fansOn,tankPercent:car.tank,
       absActive:t.abs,tractionControlActive:t.tractionControl,tireFL:w[0].tempC,tireFR:w[1].tempC,tireRL:w[2].tempC,tireRR:w[3].tempC,
       crash:events.includes("crash")||events.includes("flip"),gear:null,rpm:null};
-    this.analyzer.push(sample);
+    if(this.projector) this.analyzer.push(sample);
     sample.lapNumber=this.analyzer.lapNumber;
     sample.lapTimeSeconds=this.analyzer.samples ? Math.max(0,timeSeconds-this.analyzer.samples[0].timeSeconds) : 0;
     this.latestSample=sample;

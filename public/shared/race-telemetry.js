@@ -1,6 +1,7 @@
 // Browser telemetry contract. Engine RPM/gear are unavailable on this electric car.
 export const CSV_FIELDS = ["sessionId", "trackId", "trackVersion", "physicsVersion", "setupId", "mode", "sequence", "timestampMs", "timeSeconds", "lapNumber", "lapTimeSeconds", "distanceMeters", "trackLengthMeters", "normalizedCarPosition", "lateralOffsetMeters", "trackWidthMeters", "speedKmh", "throttle", "brake", "steer", "steerDegrees", "gLat", "gLong", "airborne", "fansOn", "tankPercent", "absActive", "tractionControlActive", "tireFL", "tireFR", "tireRL", "tireRR", "crash", "gear", "rpm"];
 const TEXT_FIELDS = new Set(["sessionId", "trackId", "trackVersion", "physicsVersion", "setupId", "mode"]);
+const TRACK_FIELDS = new Set(["distanceMeters", "trackLengthMeters", "normalizedCarPosition", "lateralOffsetMeters", "trackWidthMeters"]);
 const BOOL_FIELDS = new Set(["airborne", "fansOn", "absActive", "tractionControlActive", "crash"]);
 export function stableId(value) {
   let hash = 2166136261;
@@ -18,6 +19,8 @@ export function cleanTelemetrySample(raw) {
     } else if (BOOL_FIELDS.has(key)) {
       if (typeof value !== "boolean") throw new Error("Invalid telemetry " + key);
       sample[key] = value;
+    } else if (TRACK_FIELDS.has(key) && value === null) {
+      sample[key] = null;
     } else if (key === "gear" || key === "rpm") {
       if (value !== null) throw new Error("Engine gear/RPM are unavailable");
       sample[key] = null;
@@ -26,9 +29,10 @@ export function cleanTelemetrySample(raw) {
       sample[key] = value;
     }
   }
-  if (!["performance", "thrust", "rocket"].includes(sample.mode) || sample.normalizedCarPosition < 0 || sample.normalizedCarPosition >= 1 ||
-      sample.trackLengthMeters <= 0 || sample.trackWidthMeters <= 0 || sample.distanceMeters < 0 || sample.distanceMeters >= sample.trackLengthMeters ||
-      Math.abs(sample.normalizedCarPosition-sample.distanceMeters/sample.trackLengthMeters)>0.00001 || !Number.isInteger(sample.lapNumber) || sample.lapNumber<0 || sample.lapTimeSeconds<0 || sample.speedKmh < 0 || sample.speedKmh > 1000 || sample.throttle < 0 || sample.throttle > 1 || sample.brake < 0 || sample.brake > 1 ||
+  const hasTrack=sample.trackLengthMeters !== null;
+  if (Array.from(TRACK_FIELDS).some(function(key){return (sample[key]!==null)!==hasTrack;})) throw new Error("Incomplete track position");
+  if (hasTrack && (sample.normalizedCarPosition < 0 || sample.normalizedCarPosition >= 1 || sample.trackLengthMeters<=0 || sample.trackWidthMeters<=0 || sample.distanceMeters<0 || sample.distanceMeters>=sample.trackLengthMeters || Math.abs(sample.normalizedCarPosition-sample.distanceMeters/sample.trackLengthMeters)>0.00001)) throw new Error("Invalid track position");
+  if (!["performance", "thrust", "rocket"].includes(sample.mode) || !Number.isInteger(sample.lapNumber) || sample.lapNumber<0 || sample.lapTimeSeconds<0 || sample.speedKmh < 0 || sample.speedKmh > 1000 || sample.throttle < 0 || sample.throttle > 1 || sample.brake < 0 || sample.brake > 1 ||
       Math.abs(sample.steer) > 1 || sample.timeSeconds < 0 || sample.timestampMs < 0 || !Number.isInteger(sample.sequence) || sample.sequence < 0) throw new Error("Telemetry out of range");
   return sample;
 }

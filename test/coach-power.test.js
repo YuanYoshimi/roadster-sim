@@ -148,13 +148,14 @@ test("a measured cue is acknowledged only while visible and enabled; power off a
   }
 });
 
-test("asking to practice a skill sets a goal and requests a free plan without enabling automatic AI", async function () {
+test("asking to practice a skill checks evidence then requests one AI explanation without enabling recurring AI", async function () {
   const originalFetch = globalThis.fetch;
   const calls = [];
   globalThis.document = { hidden: false, createElement: function () { return new Element(); }, body: { appendChild: function () {} } };
   globalThis.window = { addEventListener: function () {}, speechSynthesis: { cancel: function () {}, getVoices: function () { return []; } } };
   globalThis.fetch = async function (url, options) {
     calls.push({ url, body: JSON.parse(options.body) });
+    if(url==="/api/coach") return {ok:true,json:async function(){return {source:"ai",text:"Let's test one smooth entry and compare your exit.",latencyMs:10};}};
     return { ok: true, json: async function () { return { status: "not_configured", data: {
       focus: null, outcome: null, practice: { label: "Corner speed · T4", evidence: [], text: "Need two comparable measured laps." }
     } }; } };
@@ -172,6 +173,13 @@ test("asking to practice a skill sets a goal and requests a free plan without en
     assert.equal(calls[0].body.practiceGoal.corner, "T4");
     assert.equal(engineer.autoTips.checked, false);
     assert.match(engineer.tip.textContent, /two comparable/);
+    engineer.update(SAMPLE_STATE,1,false);
+    await new Promise(setImmediate);
+    assert.equal(calls.length,2);
+    assert.equal(calls[1].url,"/api/coach");
+    assert.equal(calls[1].body.question,"I want to work on corner speed at T4");
+    assert.equal(engineer.autoTips.checked,false);
+    assert.match(engineer.tip.textContent,/smooth entry/);
     engineer.setPower(false);
   } finally {
     globalThis.fetch = originalFetch;

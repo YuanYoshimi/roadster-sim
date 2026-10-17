@@ -52,3 +52,7 @@ body:has(#telemetry[style*="block"]) #engineer { right: 592px; }
 #race-data p { overflow-wrap: anywhere; }
 #race-data button, #race-data a { color: #d0f5ff; background: #253543; border: 1px solid #526779; border-radius: 6px; padding: 6px; display: inline-block; margin: 3px 0; }
 body.presenting #race-data { display: none; }
+
+#engineer .hands-free-toggle { display: block; width: 100%; margin: 8px 0 4px; min-height: 40px; border: 1px solid #89dce4; }
+#engineer .hands-free-toggle[aria-pressed="true"] { background: #89dce4; color: #10212a; }
+#engineer .hands-free-status { display: block; padding: 4px 0 8px; line-height: 1.4; }

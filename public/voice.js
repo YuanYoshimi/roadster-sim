@@ -22,6 +22,11 @@ export function instantCallout(events, lang) {
 export class EngineerVoice {
   constructor(onQuestion, onStatus, onTranscript = function () {}) {
     this.enabled = false;
+    this.handsFree = false;
+    this.handsFreeError = "";
+    this.lastListenAttempt = -Infinity;
+    this.userSpeaking = false;
+    this.lastSpeechEndedAt = -Infinity;
     this.voiceName = "";
     this.pending = null;
     this.acknowledgment = null;
@@ -36,6 +41,8 @@ export class EngineerVoice {
     if (this.recognition) {
       this.recognition.continuous = false; // Send one question automatically when the speaker finishes.
       this.recognition.interimResults = true;
+      this.recognition.onspeechstart = function () {this.userSpeaking=true;}.bind(this);
+      this.recognition.onspeechend = function () {this.userSpeaking=false;}.bind(this);
       this.recognition.onresult = function (event) {
         if (this.cancelled) return;
         let interim = "";
@@ -46,8 +53,13 @@ export class EngineerVoice {
         onTranscript((this.transcript + interim).trim());
       }.bind(this);
       this.recognition.onerror = function (event) {
+        if (event.error === "aborted" && this.cancelled) return;
         this.transcript = "";
         this.cancelled = true;
+        if (event.error !== "no-speech") {
+          this.handsFree = false;
+          this.handsFreeError = event.error;
+        }
         const help = {
           "audio-capture": "No microphone audio is available. Check your Mac input device and microphone access for this app.",
           "not-allowed": "Microphone access was denied. Allow microphone access for this page and app, then try again.",
@@ -58,6 +70,7 @@ export class EngineerVoice {
         onStatus((help[event.error] || "Microphone: " + event.error + ".") + " You can type your question.");
       }.bind(this);
       this.recognition.onend = function () {
+        this.userSpeaking=false;
         this.listening = false;
         this.stopping = false;
         const text = (this.transcript || "").trim();
@@ -72,8 +85,24 @@ export class EngineerVoice {
   setEnabled(enabled) {
     this.enabled = enabled && "speechSynthesis" in window;
     if (!this.enabled) this.clear();
-    if (!this.enabled) this.stopListening(true);
+    if (!this.enabled) { this.handsFree = false; this.stopListening(true); }
     return this.enabled;
+  }
+
+  setHandsFree(enabled) {
+    this.handsFree = Boolean(enabled && this.enabled && this.recognition);
+    this.handsFreeError = "";
+    if(this.handsFree) this.lastSpeechEndedAt=performance.now();
+    if (!this.handsFree) this.stopListening(true);
+    return this.handsFree;
+  }
+
+  pollHandsFree(lang, blocked) {
+    if(this.handsFree && blocked && this.listening && !this.userSpeaking) this.stopListening(true);
+    if (!this.handsFree || blocked || this.listening || this.stopping || this.current || this.pending || this.acknowledgment) return;
+    if (performance.now()-this.lastListenAttempt < CONFIG.coach.handsFreeRestartMs) return;
+    this.lastListenAttempt=performance.now();
+    if(!this.startListening(lang)) {this.handsFree=false;this.handsFreeError="audio-capture";}
   }
 
   clear() {
@@ -145,6 +174,7 @@ export class EngineerVoice {
       if (this.utterance === speech) {
         this.current = null;
         this.utterance = null;
+        this.lastSpeechEndedAt=performance.now();
       }
     }.bind(this);
     speech.onend = finish;

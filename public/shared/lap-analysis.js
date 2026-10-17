@@ -78,6 +78,7 @@ export class LapAnalyzer {
   reset() {this.previous=null;this.samples=null;this.reasons=new Set();this.lapNumber=0;this.reference=null;this.lastCallouts=new Map();}
   invalidate(reason) {if(this.samples) this.reasons.add(reason);}
   push(sample) {
+    if(sample.trackLengthMeters===null){this.previous=null;return;}
     const c=CONFIG.analysis, previous=this.previous;
     if(previous && (sample.sessionId!==previous.sessionId || sample.trackVersion!==previous.trackVersion || sample.physicsVersion!==previous.physicsVersion)) this.reset();
     const prev=this.previous;

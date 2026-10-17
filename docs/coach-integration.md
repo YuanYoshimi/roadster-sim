@@ -54,7 +54,7 @@ Coach responses can include `coaching: { focus, outcome }`. The evidence card di
 
 Type or say “I want to work on corner speed at T4”, “I want to improve my braking”, or “I want to practice corner exit”. Explicit goal statements set the skill and optional corner. The Practice goal selector offers the same choices. Other questions retain the existing goal; up to four recent question/answer pairs accompany follow-ups as conversational context, not evidence. Goals last for this browser page; track/mode resets clear measurements and conversation.
 
-Selecting a goal requests a free measured plan through `/api/memory/focus`. Incoming lap-summary events trigger free plan updates for every goal even when automatic paid tips are unchecked. The engineer must still be on. Questions that need AI explanation use ai& as before; goal selection does not opt into recurring paid requests. Speech still waits for a stop or straight. This is analysis after measured laps, not turn-by-turn timing of spoken cues.
+Selecting a goal requests a free measured plan through `/api/memory/focus`. Incoming lap-summary events trigger free plan updates for every goal even when automatic paid tips are unchecked. The engineer must still be on. Questions and typed/spoken goals request AI explanation after evidence lookup; goal selection does not opt into recurring paid requests. Speech still waits for a stop or straight. This is analysis after measured laps, not turn-by-turn timing of spoken cues.
 
 Goal filtering restricts braking practice to braking offsets, corner-exit practice to throttle pickup, and an explicit corner to that corner. The evidence card includes the reference-relative minimum speed, braking/throttle offset, supporting sample count and average measured loss. Missing measurements produce a data-collection plan. More speed alone does not establish a braking adjustment or prove a causal improvement.
 
@@ -75,3 +75,6 @@ Turn windows are learned from sustained steering/lateral-g runs on the first val
 
 
 Scope: Tesla Roadster browser simulator only. `shared/live-coaching.js` provides immediate measured turn/off-track/pedal observations before a reference exists. Optional fresh `state.telemetry` augments AI context; snapshots are limited to five seconds of age and demo/replay context cannot receive them as live evidence. Example/replay lap source tags are rejected at live ingestion and planning boundaries. The recorder runs independently from the phone broadcast clock.
+
+
+`explain: true` on `/api/coach` requests AI interpretation even when deterministic focus/outcome evidence exists. Up to three sanitized live observations from the last 30 seconds and bounded `recentCoaching` support continuity; they are data, not instructions. Browser automatic coaching opts into this path; local safety warnings and free focus endpoints are unchanged. `EngineerVoice.setHandsFree()` / `pollHandsFree()` rearm single-utterance recognition between replies, block self-listening, yield to API work, and disable on persistent service/device/permission errors. The top-panel toggle and a separate persistent microphone status expose these states.

@@ -151,7 +151,7 @@ In Free drive, use **Camera view** in the upper-right panel to choose Chase, Coc
 
 ### Goal-based engineer practice
 
-Tell the engineer “I want to work on corner speed at T4”, or choose a Practice goal. It selects one measured experiment and shows the supporting lap count, speed/offset differences and time loss. Goal plans and updates after measured laps use no AI credits; follow-up questions can use ai&. Exact seconds-based braking cues require the optional measured braking-time offset from analysis. Try **Load local goal examples** on `/coach-lab.html` for a labeled demonstration; real driving supplies corner-analysis events after clean circuit laps.
+Tell the engineer “I want to work on corner speed at T4”, or choose a Practice goal. It selects one measured experiment and shows the supporting lap count, speed/offset differences and time loss. Measured focus cards and evidence lookup use no AI credits; typed/spoken goals and optional automatic AI explanations use ai&. Exact seconds-based braking cues require the optional measured braking-time offset from analysis. Try **Load local goal examples** on `/coach-lab.html` for a labeled demonstration; real driving supplies corner-analysis events after clean circuit laps.
 
 
 ## Live telemetry, lap analysis, and replay (milestones 1–2)
@@ -177,6 +177,15 @@ Voice conversation: click **Talk to engineer**, speak one question, then pause; 
 
 ### Live commentary before your first clean lap
 
-This project targets only the Tesla Roadster browser simulator. The engineer now observes actual current-run telemetry for off-track driving, overlapping pedals, and completed turns (minimum speed, peak lateral g, peak braking and fan state). These bounded observations use no AI credits and do not need a reference lap. Automatic AI explanations also receive a fresh compact snapshot of pedals, g loads, tire temperature range, track position and current lap-validity status. Stale snapshots older than five seconds are excluded. Voice can play on a straight while coasting with the brake released, as well as while accelerating.
+This project targets only the Tesla Roadster browser simulator. The engineer now observes actual current-run telemetry for off-track driving, overlapping pedals, and completed turns (minimum speed, peak lateral g, peak braking and fan state). These bounded observations feed AI coaching rather than being read aloud as routine reports. Immediate safety warnings remain local/free; automatic AI coaching uses credits and does not need a reference lap. AI explanations receive a fresh compact snapshot of pedals, g loads, tire temperature range, track position and current lap-validity status. Stale snapshots older than five seconds are excluded. Voice can play on a straight while coasting with the brake released, as well as while accelerating.
 
 Detailed earlier/later braking recommendations still require clean comparable laps. Invalid laps are not made valid just to generate advice. Synthetic examples and CSV replays are explicitly tagged and rejected by the live engineer, live-memory ingestion, AI lap-context validation and local planning fallback. Stored demo records remain separate and are never erased to hide this distinction. Telemetry capture runs on its own 10 Hz clock; the phone state broadcast remains 5 Hz.
+
+
+### AI race coaching and hands-free conversation
+
+Enable **Automatic AI coaching (uses AI credits)** for model-generated pit-wall advice. The model receives up to three recent measured turns/events, the fresh current snapshot, your goal, compact lap comparisons, scoped Neo4j context, and the last few AI recommendations. Its job is to identify one useful next experiment and explain why, not recite telemetry. Ordinary turn/temperature/assistance reports no longer take over spoken coaching. Crash, empty-air and off-track warnings remain local; measured focus cards remain available free. Asking by voice/text to work on a skill first looks up measured evidence, then requests an AI explanation even if recurring AI coaching is off.
+
+The prominent **Hands-free conversation · Off/On** button is directly under the voice controls. It listens for one utterance, sends on silence, waits through the acknowledgment and reply, then rearms automatically. It does not listen during its own speech, preventing self-transcription. Automatic coaching leaves a short listening window between replies. Voice off / Engineer off stops listening; pausing the game suspends it. Browser recognition failures turn hands-free off and remain visible next to the toggle, rather than retrying endlessly. The current in-app browser has previously returned `network` errors from its speech service; the control cannot make that service available. No always-on microphone access is silently enabled by page load.
+
+Full live telemetry and recording also run in non-circuit Roadster scenarios (including Reveal Curl). Circuit position/distance fields are null there, not fabricated; lap analysis is skipped and the API is instructed to coach the scenario rather than request clean laps.

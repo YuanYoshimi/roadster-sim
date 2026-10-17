@@ -153,3 +153,34 @@ test("radio acknowledgment survives a fast answer and both wait for a straight",
     voice.acknowledge("en");voice.setEnabled(false);assert.equal(voice.acknowledgment,null);
   } finally {delete globalThis.window;delete globalThis.SpeechSynthesisUtterance;}
 });
+
+test('hands-free listens again between replies, avoids its own speech, and stops on service errors',function(){
+ let recognition,starts=0;const questions=[];
+ class Recognition {constructor(){recognition=this;}start(){starts++;}stop(){}abort(){}}
+ globalThis.window={SpeechRecognition:Recognition,speechSynthesis:{cancel:function(){},getVoices:function(){return [];},speak:function(){}}};
+ globalThis.SpeechSynthesisUtterance=class {constructor(text){this.text=text;}};
+ try {
+  const voice=new EngineerVoice(t=>questions.push(t),function(){});voice.setEnabled(true);assert.equal(voice.setHandsFree(true),true);
+  voice.pollHandsFree('en',false);assert.equal(starts,1);
+  const result=[{transcript:'How can I improve the next turn?'}];result.isFinal=true;
+  recognition.onresult({resultIndex:0,results:[result]});recognition.onend();assert.equal(questions.length,1);
+  voice.lastListenAttempt=-Infinity;voice.pollHandsFree('en',true);assert.equal(starts,1);
+  voice.acknowledge('en');voice.pollHandsFree('en',false);assert.equal(starts,1);
+  voice.update({...SAMPLE_STATE,speedKmh:0},0,false);voice.pollHandsFree('en',false);assert.equal(starts,1);
+  voice.utterance.onend();voice.pollHandsFree('en',false);assert.equal(starts,2);
+  recognition.onerror({error:'network'});recognition.onend();voice.lastListenAttempt=-Infinity;voice.pollHandsFree('en',false);
+  assert.equal(voice.handsFree,false);assert.equal(voice.handsFreeError,'network');assert.equal(starts,2,'no repeated failure loop');
+  voice.setHandsFree(true);voice.setEnabled(false);assert.equal(voice.handsFree,false);
+ }finally{delete globalThis.window;delete globalThis.SpeechSynthesisUtterance;}
+});
+
+test('automatic AI coaching explains measured evidence rather than returning the template',async function(){
+ const request=cleanCoachRequest({state:SAMPLE_STATE,explain:true,recentCoaching:['Try smoother brake release.']});
+ request.memoryContext={coaching:{focus:{corner:'T1',metric:'brakedEarlyMeters',actionMeters:5,actionDirection:'later',comparableNow:true}},practice:{text:'Template plan'}};
+ let payload;
+ const tip=await getCoachTip(request,{env:{AI_BASE_URL:'https://example.invalid',AI_API_KEY:'test',AI_MODEL:'test'},fetch:async function(url,options){payload=JSON.parse(options.body);return {ok:true,json:async function(){return {choices:[{message:{content:'You braked earlier on both laps. Try the bounded adjustment and compare your exit.'}}]};}};}});
+ assert.equal(tip.source,'ai');assert.notEqual(tip.text,'Template plan');
+ assert.match(payload.messages[0].content,/not a dashboard narrator/);
+ assert.match(payload.messages[1].content,/smoother brake release/);
+ assert.match(payload.messages[1].content,/T1/);
+});

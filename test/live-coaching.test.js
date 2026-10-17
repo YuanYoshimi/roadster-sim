@@ -41,3 +41,21 @@ test('direct graph writes also reject demos in live memory and baseline laps sur
  const local=await resolvePracticeContext(null,scope,null,[baseline]);
  assert.equal(local.status,'not_configured');
 });
+
+test('API turn context excludes stale and wrong-track observations and never includes scripted prose',function(){
+ const raw=liveSnapshot({...raceFixture()[0],timestampMs:Date.now()});
+ const item={source:'live',trackId:scope.trackId,kind:'turn_observation',capturedAt:Date.now(),text:'Do not transmit scripted advice',evidence:{minimumSpeedKmh:63,peakLateralG:1.2,peakBrakePercent:70,fansOff:true}};
+ const request=cleanCoachRequest({state:{...SAMPLE_STATE,mode:'performance',telemetry:raw},memory:{enabled:true,scope},explain:true,observations:[{...item,capturedAt:Date.now()-40000},{...item,trackId:'other'},item]});
+ assert.equal(request.observations.length,1);assert.equal(request.observations[0].evidence.minimumSpeedKmh,63);
+ assert.equal(JSON.stringify(request.observations).includes('scripted advice'),false);assert.equal(request.explain,true);
+});
+
+test('non-circuit Roadster scenarios preserve real telemetry without inventing track progress',async function(){
+ const {cleanTelemetrySample,parseTelemetryCsv,telemetryCsv}=await import('../public/shared/race-telemetry.js');
+ const sample={...raceFixture()[0],trackId:'reveal-curl',timestampMs:Date.now(),distanceMeters:null,trackLengthMeters:null,normalizedCarPosition:null,lateralOffsetMeters:null,trackWidthMeters:null,lapNumber:0,lapTimeSeconds:0};
+ assert.deepEqual(parseTelemetryCsv(telemetryCsv([sample])),[sample]);
+ assert.throws(()=>cleanTelemetrySample({...sample,normalizedCarPosition:0.5}),/Incomplete track/);
+ const snapshot=cleanLiveSnapshot(liveSnapshot(sample));assert.equal(snapshot.circuit,false);assert.equal(snapshot.normalizedCarPosition,null);assert.equal(snapshot.offTrack,false);
+ const request=cleanCoachRequest({state:{...SAMPLE_STATE,mode:'performance',telemetry:snapshot},memory:{enabled:true,scope:{...scope,trackId:'reveal-curl'}}});
+ assert.equal(request.state.telemetry.circuit,false);assert.equal(request.state.telemetry.tireMinC,75);
+});
