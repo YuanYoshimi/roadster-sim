@@ -184,3 +184,10 @@ test('automatic AI coaching explains measured evidence rather than returning the
  assert.match(payload.messages[1].content,/smoother brake release/);
  assert.match(payload.messages[1].content,/T1/);
 });
+
+test('spoken API replies stop at a complete sentence rather than the character-limit fragment',async function(){
+ const {naturalReply}=await import('../public/shared/coaching-text.js');
+ const first='Switch the fans on before the curl; they add grip while touching the road.';
+ assert.equal(naturalReply(first+' '+('extra words '.repeat(50)),150),first);
+ assert.equal(naturalReply('Try a smoother brake release.',150),'Try a smoother brake release.');
+});

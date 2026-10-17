@@ -25,3 +25,15 @@ export function outcomeText(outcome, lang = "en", dataset = "live") {
   return example + outcome.corner + " " + behavior + "; time loss " + (outcome.lossChangeSeconds >= 0 ? "fell " : "rose ") +
     change + " s versus the pre-cue lap. One comparable attempt; cause unproven.";
 }
+
+// Never finish a spoken answer halfway through a word or sentence at the output limit.
+export function naturalReply(value, limit) {
+  if (typeof value !== "string") return "";
+  const text=value.trim();
+  if(text.length<limit) return text;
+  const clipped=text.slice(0,limit);
+  const endings=Array.from(clipped.matchAll(/[.!?](?=\s|$)/g));
+  const end=endings.at(-1)?.index;
+  if(end!==undefined && end>=40) return clipped.slice(0,end+1);
+  return clipped.replace(/\s+\S*$/,"").trim()+"…";
+}

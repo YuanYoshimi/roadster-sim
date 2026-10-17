@@ -2,7 +2,7 @@
 import { LiveDrivingCoach } from "./shared/live-coaching.js";
 import { CONFIG } from "./config.js";
 import { PRACTICE_GOALS, cleanPracticeGoal, inferPracticeGoal } from "./shared/practice-goal.js";
-import { focusText, outcomeText } from "./shared/coaching-text.js";
+import { focusText, outcomeText, naturalReply } from "./shared/coaching-text.js";
 import { EngineerVoice, instantCallout } from "./voice.js";
 
 function memoryId() {
@@ -655,6 +655,7 @@ export class RaceEngineer {
       });
       if (!response.ok) throw new Error("coach_unavailable");
       const tip = await response.json();
+      if(tip.source === "ai") tip.text=naturalReply(tip.text,CONFIG.coach.maxResponseLength);
       if (generation !== this.generation) return;
       if (typeof tip.text !== "string" || !tip.text) throw new Error("empty_tip");
       if (tip.memory) this.showMemory(tip.memory);
